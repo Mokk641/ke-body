@@ -199,6 +199,11 @@ static esp_err_t backlight_init(void)
     return ledc_channel_config(&c);
 }
 
+i2c_master_bus_handle_t board_i2c_bus(void)
+{
+    return s_i2c;
+}
+
 void board_backlight_set(uint8_t percent)
 {
     if (percent > 100) percent = 100;

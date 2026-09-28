@@ -5,11 +5,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "driver/i2c_master.h"
 
 #define BOARD_LCD_W 320
 #define BOARD_LCD_H 480
 
 esp_err_t board_init(void);
+
+/* Shared I2C bus (TCA9554, FT6336, ES8311, AXP2101 all live here). */
+i2c_master_bus_handle_t board_i2c_bus(void);
 
 /* Push a full 320x480 RGB565 (byte-swapped) frame to the panel. Blocks until sent. */
 void board_lcd_flush(const uint16_t *fb);

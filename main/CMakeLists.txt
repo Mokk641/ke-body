@@ -8,6 +8,9 @@ idf_component_register(
         "wifi_mgr.c"
         "http_api.c"
         "console_cmd.c"
+        "audio.c"
+        "settings.c"
+        "uploader.c"
         "fonts/font_face64.c"
         "fonts/font_face44.c"
         "fonts/font_face30.c"
@@ -17,12 +20,15 @@ idf_component_register(
     PRIV_REQUIRES
         esp_lcd
         esp_lcd_st7796
+        es8311
         driver
+        esp_driver_i2s
         nvs_flash
         esp_wifi
         esp_netif
         esp_event
         esp_http_server
+        esp_http_client
         console
         esp_timer
 )

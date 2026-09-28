@@ -57,7 +57,7 @@ def gb2312_hanzi():
     return "".join(out)
 
 
-STATUS_CJK = "等待配网连接中无网络已断开未错误重试"  # corner status words
+STATUS_CJK = "等待配网连接中无网络已断开未错误重试在听发送失败播放录音"  # corner status words
 
 # --- helpers ----------------------------------------------------------------
 

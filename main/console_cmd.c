@@ -1,8 +1,11 @@
 #include "console_cmd.h"
 #include "wifi_mgr.h"
 #include "ui.h"
+#include "audio.h"
+#include "settings.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -40,6 +43,49 @@ static int cmd_wifi(int argc, char **argv)
     printf("saved ssid \"%s\", rebooting...\n", argv[1]);
     vTaskDelay(pdMS_TO_TICKS(300));
     esp_restart();
+    return 0;
+}
+
+static int cmd_server(int argc, char **argv)
+{
+    char url[160];
+    if (argc == 1) {
+        if (settings_get_str(SETTINGS_KEY_SERVER_URL, url, sizeof url)) printf("server: %s\n", url);
+        else printf("no server url stored. usage: server http://<pc-ip>:8770/hear\n");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "clear") == 0) {
+        esp_err_t err = settings_erase(SETTINGS_KEY_SERVER_URL);
+        printf(err == ESP_OK ? "cleared\n" : "error: %s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (argc != 2 || strncmp(argv[1], "http://", 7) != 0 || strlen(argv[1]) >= sizeof url) {
+        printf("usage: server http://<pc-ip>:8770/hear   (http only, max %u chars)\n", (unsigned)sizeof url - 1);
+        return 1;
+    }
+    esp_err_t err = settings_set_str(SETTINGS_KEY_SERVER_URL, argv[1]);
+    if (err != ESP_OK) {
+        printf("error saving: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    printf("saved server url: %s (takes effect immediately)\n", argv[1]);
+    return 0;
+}
+
+static int cmd_volume(int argc, char **argv)
+{
+    if (argc == 1) {
+        printf("volume: %d\n", audio_get_volume());
+        return 0;
+    }
+    int v = atoi(argv[1]);
+    if (v < 0 || v > 100) { printf("usage: volume <0-100>\n"); return 1; }
+    esp_err_t err = audio_set_volume(v);
+    if (err != ESP_OK) {
+        printf("error: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    printf("volume: %d\n", v);
     return 0;
 }
 
@@ -81,9 +127,11 @@ esp_err_t console_cmd_start(void)
 
     esp_console_register_help_command();
     const esp_console_cmd_t cmds[] = {
-        { .command = "wifi", .help = "wifi <ssid> <password> | wifi | wifi clear", .func = cmd_wifi },
-        { .command = "face", .help = "face <kaomoji>  (local test)", .func = cmd_face },
-        { .command = "say",  .help = "say <text>      (local test)", .func = cmd_say },
+        { .command = "wifi",   .help = "wifi <ssid> <password> | wifi | wifi clear", .func = cmd_wifi },
+        { .command = "server", .help = "server http://<pc-ip>:8770/hear | server | server clear", .func = cmd_server },
+        { .command = "volume", .help = "volume <0-100> | volume", .func = cmd_volume },
+        { .command = "face",   .help = "face <kaomoji>  (local test)", .func = cmd_face },
+        { .command = "say",    .help = "say <text>      (local test)", .func = cmd_say },
     };
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         ESP_ERROR_CHECK(esp_console_cmd_register(&cmds[i]));

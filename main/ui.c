@@ -19,9 +19,11 @@ static const char *TAG = "ui";
 
 static SemaphoreHandle_t s_lock;
 static SemaphoreHandle_t s_dirty;
-static ui_state_t s_state;            /* what is drawn */
-static char s_base_face[UI_FACE_BUF];  /* face to restore after a blush */
-static bool s_blushing;
+static ui_state_t s_state;                 /* what is drawn */
+static char s_base_face[UI_FACE_BUF];      /* set by /face */
+static char s_override_face[UI_FACE_BUF];  /* blush / recording / playing; "" = none */
+static char s_base_corner[48];
+static char s_override_corner[48];
 static esp_timer_handle_t s_blush_timer;
 static uint16_t *s_fb;
 
@@ -46,6 +48,13 @@ static void copy_limited(char *dst, size_t dst_size, const char *src, int max_ch
     dst[out] = 0;
 }
 
+/* recompute the drawn face/corner from base + override; call with lock held */
+static void recompute(void)
+{
+    strcpy(s_state.face, s_override_face[0] ? s_override_face : s_base_face);
+    strcpy(s_state.corner, s_override_corner[0] ? s_override_corner : s_base_corner);
+}
+
 static void mark_dirty(void)
 {
     xSemaphoreGive(s_dirty);
@@ -67,8 +76,10 @@ static void render_task(void *arg)
 static void blush_timeout(void *arg)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_blushing = false;
-    strcpy(s_state.face, s_base_face);
+    if (strcmp(s_override_face, BLUSH_FACE) == 0) {
+        s_override_face[0] = 0;
+        recompute();
+    }
     xSemaphoreGive(s_lock);
     mark_dirty();
 }
@@ -86,7 +97,7 @@ void ui_start(void)
     gfx_init(s_fb, BOARD_LCD_W, BOARD_LCD_H);
 
     strcpy(s_base_face, "(—_—)");
-    strcpy(s_state.face, s_base_face);
+    recompute();
 
     const esp_timer_create_args_t targs = { .callback = blush_timeout, .name = "blush" };
     ESP_ERROR_CHECK(esp_timer_create(&targs, &s_blush_timer));
@@ -100,7 +111,7 @@ void ui_set_face(const char *utf8)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     copy_limited(s_base_face, sizeof(s_base_face), utf8, UI_FACE_MAX_CHARS);
     if (!s_base_face[0]) strcpy(s_base_face, "(—_—)");
-    if (!s_blushing) strcpy(s_state.face, s_base_face);
+    recompute();
     xSemaphoreGive(s_lock);
     mark_dirty();
 }
@@ -116,7 +127,29 @@ void ui_set_say(const char *utf8)
 void ui_set_corner(const char *utf8)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    copy_limited(s_state.corner, sizeof(s_state.corner), utf8, 40);
+    copy_limited(s_base_corner, sizeof(s_base_corner), utf8, 40);
+    recompute();
+    xSemaphoreGive(s_lock);
+    mark_dirty();
+}
+
+void ui_override_face(const char *utf8)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (utf8) copy_limited(s_override_face, sizeof(s_override_face), utf8, UI_FACE_MAX_CHARS);
+    else s_override_face[0] = 0;
+    recompute();
+    xSemaphoreGive(s_lock);
+    esp_timer_stop(s_blush_timer);
+    mark_dirty();
+}
+
+void ui_override_corner(const char *utf8)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (utf8) copy_limited(s_override_corner, sizeof(s_override_corner), utf8, 40);
+    else s_override_corner[0] = 0;
+    recompute();
     xSemaphoreGive(s_lock);
     mark_dirty();
 }
@@ -124,8 +157,13 @@ void ui_set_corner(const char *utf8)
 void ui_blush(void)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_blushing = true;
-    strcpy(s_state.face, BLUSH_FACE);
+    /* don't interrupt a recording/playing face */
+    if (s_override_face[0] && strcmp(s_override_face, BLUSH_FACE) != 0) {
+        xSemaphoreGive(s_lock);
+        return;
+    }
+    strcpy(s_override_face, BLUSH_FACE);
+    recompute();
     xSemaphoreGive(s_lock);
     esp_timer_stop(s_blush_timer);
     esp_timer_start_once(s_blush_timer, (uint64_t)BLUSH_MS * 1000);
