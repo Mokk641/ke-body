@@ -1,0 +1,28 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "board.c"
+        "ui.c"
+        "ui_render.c"
+        "gfx.c"
+        "wifi_mgr.c"
+        "http_api.c"
+        "console_cmd.c"
+        "fonts/font_face64.c"
+        "fonts/font_face44.c"
+        "fonts/font_face30.c"
+        "fonts/font_text22.c"
+        "fonts/font_small14.c"
+    INCLUDE_DIRS "."
+    PRIV_REQUIRES
+        esp_lcd
+        esp_lcd_st7796
+        driver
+        nvs_flash
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_server
+        console
+        esp_timer
+)

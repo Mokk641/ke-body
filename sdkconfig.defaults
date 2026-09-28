@@ -1,0 +1,27 @@
+# ke-body / Waveshare ESP32-S3-Touch-LCD-3.5(-C)
+# Flash / PSRAM settings copied from the official Waveshare ESP-IDF examples
+# (waveshareteam/ESP32-S3-Touch-LCD-3.5, ESP-IDF/*/sdkconfig.defaults).
+CONFIG_IDF_TARGET="esp32s3"
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Console (serial commands such as `wifi <ssid> <password>`) goes over the
+# USB-Serial/JTAG port, i.e. the same COM port used for flashing.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# HTTP server: small requests only
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=128
