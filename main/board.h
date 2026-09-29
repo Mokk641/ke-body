@@ -35,6 +35,9 @@ void board_backlight_set(uint8_t percent);
 bool board_touch_read(uint16_t *x, uint16_t *y);
 void board_touch_log(bool on);   /* print raw + mapped coordinates while pressed */
 
+/* Speaker amplifier enable (TCA9554 P7, high = on). Off after board_init. */
+esp_err_t board_amp_enable(bool on);
+
 /* TCA9554 I/O expander pin control for bench tests. mode: 0 = output low,
  * 1 = output high, 2 = input. Pin 1 is the LCD reset (keep it high). */
 esp_err_t board_expander_set(int pin, int mode);

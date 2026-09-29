@@ -120,6 +120,26 @@ static esp_err_t lcd_hw_reset_via_expander(void)
     return ESP_OK;
 }
 
+/* Speaker amplifier enable: TCA9554 P7, high = amplifier on.
+ * Found on the bench (2026-09-29): with P7 low the speaker is silent even though the
+ * ES8311 DAC output is confirmed via the internal loopback; P7 high = sound.
+ * Not documented in any official example. */
+#define TCA_PIN_AMP 7
+
+esp_err_t board_amp_enable(bool on)
+{
+    uint8_t cfg, out;
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x03, &cfg, 1), TAG, "tca read cfg");
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x01, &out, 1), TAG, "tca read out");
+    if (on) out |= (1 << TCA_PIN_AMP); else out &= ~(1 << TCA_PIN_AMP);
+    ESP_RETURN_ON_ERROR(i2c_write_reg(s_tca, 0x01, out), TAG, "tca out");
+    if (cfg & (1 << TCA_PIN_AMP)) {
+        cfg &= ~(1 << TCA_PIN_AMP);
+        ESP_RETURN_ON_ERROR(i2c_write_reg(s_tca, 0x03, cfg), TAG, "tca cfg");
+    }
+    return ESP_OK;
+}
+
 esp_err_t board_expander_set(int pin, int mode)
 {
     if (pin < 0 || pin > 7 || mode < 0 || mode > 2) return ESP_ERR_INVALID_ARG;
@@ -148,7 +168,7 @@ esp_err_t board_expander_dump(void)
     printf("TCA9554 input=0x%02x output=0x%02x config=0x%02x (1=input)\n", in, out, cfg);
     for (int p = 0; p < 8; p++) {
         printf("  pin %d: %s, level %d%s\n", p, (cfg >> p) & 1 ? "input " : "output", (in >> p) & 1,
-               p == 1 ? "  (LCD reset)" : "");
+               p == 1 ? "  (LCD reset)" : p == TCA_PIN_AMP ? "  (speaker amplifier enable)" : "");
     }
     return ESP_OK;
 }
@@ -278,6 +298,9 @@ esp_err_t board_init(void)
     }
     ESP_RETURN_ON_ERROR(i2c_init(), TAG, "i2c");
     lcd_hw_reset_via_expander();           /* non-fatal: log and continue */
+    if (board_amp_enable(false) != ESP_OK) {   /* amplifier off until something plays */
+        ESP_LOGW(TAG, "could not set amplifier enable (TCA9554 P7)");
+    }
     ESP_RETURN_ON_ERROR(lcd_init(), TAG, "lcd");
     ESP_RETURN_ON_ERROR(backlight_init(), TAG, "backlight");
     ESP_LOGI(TAG, "board init done");

@@ -8,7 +8,7 @@
 
 #define AUDIO_REC_RATE        16000
 #define AUDIO_REC_MAX_SECONDS 30
-#define AUDIO_DEFAULT_VOLUME  70
+#define AUDIO_DEFAULT_VOLUME  10
 
 typedef enum {
     AUDIO_EVT_REC_START,   /* recording began */
@@ -32,7 +32,7 @@ bool audio_is_recording(void);
  * on error the caller still owns it. */
 esp_err_t audio_play_wav(uint8_t *wav, size_t len);
 
-esp_err_t audio_set_volume(int percent);   /* 0..100 */
+esp_err_t audio_set_volume(int percent);   /* 0 = mute; 100 = codec maximum (+32 dB); ~6 dB per 10 steps */
 int audio_get_volume(void);
 
 /* Diagnostics for the serial console. */

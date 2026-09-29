@@ -26,6 +26,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "es8311.h"
+#include "board.h"
 
 static const char *TAG = "audio";
 
@@ -62,6 +63,7 @@ static bool s_mono;          /* I2S slot mode: false = stereo (official), true =
 static bool s_probe;         /* test tone: capture RX while playing and report peaks */
 
 static inline int frame_bytes(void) { return s_mono ? 2 : 4; }
+static esp_err_t apply_volume(int percent);
 
 /* ---- WAV helpers ---------------------------------------------------------- */
 
@@ -198,7 +200,7 @@ static esp_err_t codec_init(i2c_master_bus_handle_t bus)
     for (unsigned i = 0; i < sizeof(extra) / sizeof(extra[0]); i++) {
         ESP_RETURN_ON_ERROR(es8311_write_register(s_codec, extra[i][0], extra[i][1]), TAG, "es8311 extra reg");
     }
-    ESP_RETURN_ON_ERROR(es8311_voice_volume_set(s_codec, s_volume, NULL), TAG, "volume");
+    ESP_RETURN_ON_ERROR(apply_volume(s_volume), TAG, "volume");
     ESP_RETURN_ON_ERROR(es8311_microphone_config(s_codec, false), TAG, "mic");
     ESP_RETURN_ON_ERROR(es8311_microphone_gain_set(s_codec, MIC_GAIN), TAG, "mic gain");
     uint8_t id1 = 0, id2 = 0, ver = 0;
@@ -261,6 +263,8 @@ static void do_play(uint8_t *wav, size_t len)
     }
     ESP_LOGI(TAG, "play %d Hz %d ch, %u bytes", w.rate, w.channels, (unsigned)w.pcm_len);
     if (s_cb) s_cb(AUDIO_EVT_PLAY_START, NULL, 0);
+    board_amp_enable(true);
+    vTaskDelay(pdMS_TO_TICKS(30));   /* let the amplifier wake up before the first samples */
 
     const int16_t *src = (const int16_t *)w.pcm;
     size_t frames_total = w.pcm_len / (2 * w.channels);
@@ -319,6 +323,7 @@ static void do_play(uint8_t *wav, size_t len)
         s_probe = false;
     }
     vTaskDelay(pdMS_TO_TICKS(80));   /* let the DMA drain before reporting done */
+    board_amp_enable(false);         /* amplifier off when idle: no hiss, less power */
     ESP_LOGI(TAG, "play done: %u/%u frames, %u bytes on I2S in %d ms (volume %d)",
              (unsigned)pos, (unsigned)frames_total, (unsigned)bytes_out,
              (int)((esp_timer_get_time() - t0) / 1000), s_volume);
@@ -425,12 +430,30 @@ esp_err_t audio_play_wav(uint8_t *wav, size_t len)
     return ESP_OK;
 }
 
+/* ES8311 DAC volume register 0x32: 0x00 = -95.5 dB, 0.5 dB per step, 0xBF = 0 dB, 0xFF = +32 dB.
+ * Map percent to dB so that 100 = codec maximum (+32 dB, the level heard on the bench)
+ * and every 10 steps is about 6 dB: dB = 32 - 0.6 * (100 - percent). 0 = mute. */
+static esp_err_t apply_volume(int percent)
+{
+    uint8_t reg;
+    if (percent <= 0) {
+        reg = 0;
+    } else {
+        float db = 32.0f - 0.6f * (100 - percent);
+        int r = (int)((db + 95.5f) * 2.0f + 0.5f);
+        if (r < 1) r = 1;
+        if (r > 255) r = 255;
+        reg = (uint8_t)r;
+    }
+    return es8311_write_register(s_codec, 0x32, reg);
+}
+
 esp_err_t audio_set_volume(int percent)
 {
     if (!s_ready) return ESP_ERR_INVALID_STATE;
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
-    esp_err_t err = es8311_voice_volume_set(s_codec, percent, NULL);
+    esp_err_t err = apply_volume(percent);
     if (err == ESP_OK) s_volume = percent;
     return err;
 }
