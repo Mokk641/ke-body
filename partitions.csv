@@ -1,5 +1,7 @@
-# Same layout as the official Waveshare examples (16MB flash).
-# Name,   Type, SubType, Offset,  Size, Flags
-nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 6M,
+# 16MB flash. nvs/phy/factory as in the official Waveshare examples; "storage" added
+# in phase 4 for photos when no SD card is present (FAT with wear levelling, /flash).
+# Name,   Type, SubType, Offset,   Size,  Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  6M,
+storage,  data, fat,     0x610000, 4M,

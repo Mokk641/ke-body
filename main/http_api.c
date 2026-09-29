@@ -66,7 +66,46 @@ static esp_err_t say_post(httpd_req_t *req)
     int n = read_body(req, body, sizeof body);
     if (n < 0) return ESP_FAIL;
     ESP_LOGI(TAG, "say: %s", body);
-    ui_set_say(body);
+    ui_set_say(body);          /* Ke's message: into the chat log + silent alert */
+    return ok(req);
+}
+
+/* text she said (speech-to-text result from the PC): her side of the chat, no alert */
+static esp_err_t heard_post(httpd_req_t *req)
+{
+    char body[BODY_MAX];
+    int n = read_body(req, body, sizeof body);
+    if (n < 0) return ESP_FAIL;
+    if (n > 0) ui_chat_add(CHAT_HER, body);
+    return ok(req);
+}
+
+static esp_err_t buttons_post(httpd_req_t *req)
+{
+    char body[1024];
+    int n = read_body(req, body, sizeof body);
+    if (n < 0) return ESP_FAIL;
+    esp_err_t err = ui_set_buttons_json(body);
+    if (err != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+            "expect JSON: {\"text\":[\"想你了\",...],\"emoji\":[\"♡\",...],\"shake\":\"想你了\"} (max 8 each, 12 chars, <1KB)");
+    }
+    ESP_LOGI(TAG, "buttons updated");
+    return ok(req);
+}
+
+static esp_err_t buttons_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    return httpd_resp_sendstr(req, ui_get_buttons_json());
+}
+
+static esp_err_t anim_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    if (strcmp(body, "on") && strcmp(body, "off")) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "anim must be on or off");
+    ui_set_anim(strcmp(body, "on") == 0);
     return ok(req);
 }
 
@@ -166,7 +205,7 @@ esp_err_t http_api_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 80;
     cfg.lru_purge_enable = true;
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 24;
     cfg.recv_wait_timeout = 10;
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) {
@@ -182,10 +221,14 @@ esp_err_t http_api_start(void)
         { .uri = "/rotate", .method = HTTP_POST, .handler = rotate_post },
         { .uri = "/brightness", .method = HTTP_POST, .handler = brightness_post },
         { .uri = "/theme",  .method = HTTP_POST, .handler = theme_post },
+        { .uri = "/heard",  .method = HTTP_POST, .handler = heard_post },
+        { .uri = "/buttons", .method = HTTP_POST, .handler = buttons_post },
+        { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
+        { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(s_server, &routes[i]);
     }
-    ESP_LOGI(TAG, "listening on :80  (GET /ping, POST /face /say /play /volume /rotate /brightness /theme)");
+    ESP_LOGI(TAG, "listening on :80");
     return ESP_OK;
 }

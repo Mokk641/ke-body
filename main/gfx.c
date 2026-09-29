@@ -4,6 +4,7 @@
 
 static uint16_t *s_fb;
 static int s_w, s_h;
+static int s_cx0, s_cy0, s_cx1, s_cy1;   /* clip: [x0,x1) x [y0,y1) */
 
 static inline uint16_t swap16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
 
@@ -12,10 +13,32 @@ void gfx_init(uint16_t *fb, int w, int h)
     s_fb = fb;
     s_w = w;
     s_h = h;
+    gfx_clear_clip();
 }
 
 int gfx_width(void) { return s_w; }
 int gfx_height(void) { return s_h; }
+uint16_t *gfx_fb(void) { return s_fb; }
+
+void gfx_set_clip(int x, int y, int w, int h)
+{
+    s_cx0 = x < 0 ? 0 : x;
+    s_cy0 = y < 0 ? 0 : y;
+    s_cx1 = x + w > s_w ? s_w : x + w;
+    s_cy1 = y + h > s_h ? s_h : y + h;
+    if (s_cx1 < s_cx0) s_cx1 = s_cx0;
+    if (s_cy1 < s_cy0) s_cy1 = s_cy0;
+}
+
+void gfx_clear_clip(void)
+{
+    s_cx0 = 0; s_cy0 = 0; s_cx1 = s_w; s_cy1 = s_h;
+}
+
+static inline bool in_clip(int x, int y)
+{
+    return x >= s_cx0 && x < s_cx1 && y >= s_cy0 && y < s_cy1;
+}
 
 void gfx_fill(uint16_t color)
 {
@@ -26,15 +49,15 @@ void gfx_fill(uint16_t color)
 
 void gfx_fill_rect(int x, int y, int w, int h, uint16_t color)
 {
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > s_w) w = s_w - x;
-    if (y + h > s_h) h = s_h - y;
-    if (w <= 0 || h <= 0) return;
+    int x0 = x < s_cx0 ? s_cx0 : x;
+    int y0 = y < s_cy0 ? s_cy0 : y;
+    int x1 = x + w > s_cx1 ? s_cx1 : x + w;
+    int y1 = y + h > s_cy1 ? s_cy1 : y + h;
+    if (x1 <= x0 || y1 <= y0) return;
     uint16_t c = swap16(color);
-    for (int yy = y; yy < y + h; yy++) {
-        uint16_t *row = s_fb + yy * s_w + x;
-        for (int i = 0; i < w; i++) row[i] = c;
+    for (int yy = y0; yy < y1; yy++) {
+        uint16_t *row = s_fb + yy * s_w + x0;
+        for (int i = 0; i < x1 - x0; i++) row[i] = c;
     }
 }
 
@@ -54,16 +77,14 @@ void gfx_fill_round_rect(int x, int y, int w, int h, int r, uint16_t color)
     if (r <= 0) { gfx_fill_rect(x, y, w, h, color); return; }
     if (r * 2 > w) r = w / 2;
     if (r * 2 > h) r = h / 2;
-    /* middle band */
     gfx_fill_rect(x, y + r, w, h - 2 * r, color);
-    /* top and bottom bands with rounded corners */
     uint16_t c = swap16(color);
     for (int yy = 0; yy < r; yy++) {
         int ty = y + yy, by = y + h - 1 - yy;
         for (int xx = x; xx < x + w; xx++) {
             if (in_round_rect(xx, ty, x, y, w, h, r)) {
-                if (ty >= 0 && ty < s_h && xx >= 0 && xx < s_w) s_fb[ty * s_w + xx] = c;
-                if (by >= 0 && by < s_h && xx >= 0 && xx < s_w) s_fb[by * s_w + xx] = c;
+                if (in_clip(xx, ty)) s_fb[ty * s_w + xx] = c;
+                if (in_clip(xx, by)) s_fb[by * s_w + xx] = c;
             }
         }
     }
@@ -73,14 +94,51 @@ void gfx_draw_round_rect(int x, int y, int w, int h, int r, int thickness, uint1
 {
     uint16_t c = swap16(color);
     for (int yy = y; yy < y + h; yy++) {
-        if (yy < 0 || yy >= s_h) continue;
+        if (yy < s_cy0 || yy >= s_cy1) continue;
+        bool edge_row = (yy < y + r + thickness) || (yy >= y + h - r - thickness);
         for (int xx = x; xx < x + w; xx++) {
-            if (xx < 0 || xx >= s_w) continue;
+            if (xx < s_cx0 || xx >= s_cx1) continue;
+            if (!edge_row && xx >= x + thickness && xx < x + w - thickness) { xx = x + w - thickness - 1; continue; }
             if (in_round_rect(xx, yy, x, y, w, h, r) &&
                 !in_round_rect(xx, yy, x + thickness, y + thickness, w - 2 * thickness, h - 2 * thickness, r - thickness))
                 s_fb[yy * s_w + xx] = c;
         }
     }
+}
+
+void gfx_fill_circle(int cx, int cy, int r, uint16_t color)
+{
+    uint16_t c = swap16(color);
+    for (int yy = cy - r; yy <= cy + r; yy++) {
+        for (int xx = cx - r; xx <= cx + r; xx++) {
+            int dx = xx - cx, dy = yy - cy;
+            if (dx * dx + dy * dy <= r * r && in_clip(xx, yy)) s_fb[yy * s_w + xx] = c;
+        }
+    }
+}
+
+void gfx_blit(int x, int y, const uint16_t *src, int src_w, int src_h)
+{
+    for (int yy = 0; yy < src_h; yy++) {
+        int dy = y + yy;
+        if (dy < s_cy0 || dy >= s_cy1) continue;
+        int x0 = x < s_cx0 ? s_cx0 : x;
+        int x1 = x + src_w > s_cx1 ? s_cx1 : x + src_w;
+        if (x1 <= x0) continue;
+        memcpy(s_fb + dy * s_w + x0, src + yy * src_w + (x0 - x), (size_t)(x1 - x0) * 2);
+    }
+}
+
+uint16_t gfx_mix(uint16_t a, uint16_t b, int t)
+{
+    if (t <= 0) return a;
+    if (t >= 255) return b;
+    int ar = (a >> 11) & 31, ag = (a >> 5) & 63, ab = a & 31;
+    int br = (b >> 11) & 31, bg = (b >> 5) & 63, bb = b & 31;
+    int r = (ar * (255 - t) + br * t) / 255;
+    int g = (ag * (255 - t) + bg * t) / 255;
+    int bl = (ab * (255 - t) + bb * t) / 255;
+    return (uint16_t)((r << 11) | (g << 5) | bl);
 }
 
 /* ---- UTF-8 ------------------------------------------------------------- */
@@ -134,7 +192,7 @@ static int glyph_advance(const kb_font_t *f, uint32_t cp)
 
 static inline void blend_px(int x, int y, uint16_t color, int a /*0..15*/)
 {
-    if (x < 0 || y < 0 || x >= s_w || y >= s_h || a == 0) return;
+    if (a == 0 || !in_clip(x, y)) return;
     uint16_t *p = s_fb + y * s_w + x;
     if (a >= 15) { *p = swap16(color); return; }
     uint16_t bg = swap16(*p);
@@ -151,6 +209,7 @@ static void draw_glyph(const kb_font_t *f, const kb_glyph_t *g, int px, int py, 
     int stride = (g->w + 1) / 2;
     const uint8_t *bm = f->bitmap + g->off;
     int x0 = px + g->xoff, y0 = py + g->yoff;
+    if (x0 >= s_cx1 || y0 >= s_cy1 || x0 + g->w <= s_cx0 || y0 + g->h <= s_cy0) return;
     for (int yy = 0; yy < g->h; yy++) {
         const uint8_t *row = bm + yy * stride;
         for (int xx = 0; xx < g->w; xx++) {
@@ -166,14 +225,20 @@ static void draw_tofu(const kb_font_t *f, int px, int py, uint16_t color)
     gfx_draw_round_rect(px + 1, py - h + 2, w - 2, h - 2, 2, 1, color);
 }
 
-int gfx_text_width(const kb_font_t *f, const char *utf8)
+int gfx_text_width_n(const kb_font_t *f, const char *utf8, int len)
 {
     int w = 0;
-    while (*utf8) w += glyph_advance(f, gfx_utf8_next(&utf8));
+    const char *end = utf8 + len;
+    while (utf8 < end && *utf8) w += glyph_advance(f, gfx_utf8_next(&utf8));
     return w;
 }
 
-static void draw_text_n(const kb_font_t *f, int x, int y, const char *utf8, int len, uint16_t color)
+int gfx_text_width(const kb_font_t *f, const char *utf8)
+{
+    return gfx_text_width_n(f, utf8, (int)strlen(utf8));
+}
+
+void gfx_draw_text_n(const kb_font_t *f, int x, int y, const char *utf8, int len, uint16_t color)
 {
     const char *end = utf8 + len;
     while (utf8 < end && *utf8) {
@@ -191,7 +256,7 @@ static void draw_text_n(const kb_font_t *f, int x, int y, const char *utf8, int 
 
 void gfx_draw_text(const kb_font_t *f, int x, int y, const char *utf8, uint16_t color)
 {
-    draw_text_n(f, x, y, utf8, (int)strlen(utf8), color);
+    gfx_draw_text_n(f, x, y, utf8, (int)strlen(utf8), color);
 }
 
 void gfx_draw_text_centered(const kb_font_t *f, int cx, int y, const char *utf8, uint16_t color)

@@ -13,6 +13,7 @@ idf_component_register(
         "audio.c"
         "settings.c"
         "uploader.c"
+        "bridge.c"
         "fonts/font_face64.c"
         "fonts/font_face44.c"
         "fonts/font_face30.c"
@@ -34,4 +35,5 @@ idf_component_register(
         esp_http_client
         console
         esp_timer
+        json
 )

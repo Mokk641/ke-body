@@ -6,6 +6,7 @@
 #include "light.h"
 #include "pmic.h"
 #include "board.h"
+#include "bridge.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,6 +162,32 @@ static int cmd_theme(int argc, char **argv)
     return 0;
 }
 
+void app_send_text(const char *text);
+
+static int cmd_msg(int argc, char **argv)
+{
+    char buf[200];
+    join_args(argc, argv, buf, sizeof buf);
+    if (!buf[0]) { printf("usage: msg <text>   (same as pressing a quick button)\n"); return 1; }
+    app_send_text(buf);
+    return 0;
+}
+
+static int cmd_buttons(int argc, char **argv)
+{
+    printf("%s\n", ui_get_buttons_json());
+    return 0;
+}
+
+static int cmd_anim(int argc, char **argv)
+{
+    if (argc == 1) { printf("anim: %s\n", ui_get_anim() ? "on" : "off"); return 0; }
+    if (strcmp(argv[1], "on") && strcmp(argv[1], "off")) { printf("usage: anim on|off\n"); return 1; }
+    ui_set_anim(strcmp(argv[1], "on") == 0);
+    printf("anim: %s (saved)\n", argv[1]);
+    return 0;
+}
+
 static int cmd_touchlog(int argc, char **argv)
 {
     if (argc != 2 || (strcmp(argv[1], "on") && strcmp(argv[1], "off"))) {
@@ -279,6 +306,9 @@ esp_err_t console_cmd_start(void)
         { .command = "tca",      .help = "tca | tca <pin> 0|1|in   (TCA9554 expander pins)", .func = cmd_tca },
         { .command = "audio",    .help = "audio test [ms] [rate] | audio mic [ms] | audio slot mono|stereo | audio regs | audio gain <0-7>", .func = cmd_audio },
         { .command = "gpio",     .help = "gpio <n> 0|1|in   (drive a free ESP32 pin, amplifier-enable hunting)", .func = cmd_gpio },
+        { .command = "msg",      .help = "msg <text>   send like a quick button (chat + bridge /msg)", .func = cmd_msg },
+        { .command = "buttons",  .help = "show the quick-button config JSON", .func = cmd_buttons },
+        { .command = "anim",     .help = "anim on|off (saved)", .func = cmd_anim },
         { .command = "face",     .help = "face <kaomoji>  (local test)", .func = cmd_face },
         { .command = "say",      .help = "say <text>      (local test)", .func = cmd_say },
     };

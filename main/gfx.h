@@ -12,15 +12,29 @@
 void gfx_init(uint16_t *fb, int w, int h);
 int gfx_width(void);
 int gfx_height(void);
+uint16_t *gfx_fb(void);
+
+/* Clip rectangle for all drawing (default: whole screen). */
+void gfx_set_clip(int x, int y, int w, int h);
+void gfx_clear_clip(void);
 
 void gfx_fill(uint16_t color);
 void gfx_fill_rect(int x, int y, int w, int h, uint16_t color);
 void gfx_fill_round_rect(int x, int y, int w, int h, int r, uint16_t color);
 void gfx_draw_round_rect(int x, int y, int w, int h, int r, int thickness, uint16_t color);
+void gfx_fill_circle(int cx, int cy, int r, uint16_t color);
+
+/* Copy a byte-swapped RGB565 image (same format as the framebuffer) to x,y; clipped. */
+void gfx_blit(int x, int y, const uint16_t *src, int src_w, int src_h);
+
+/* Mix two colours: t = 0..255 (0 = a, 255 = b). */
+uint16_t gfx_mix(uint16_t a, uint16_t b, int t);
 
 /* Text. Strings are UTF-8. y is the baseline. */
 int gfx_text_width(const kb_font_t *f, const char *utf8);
+int gfx_text_width_n(const kb_font_t *f, const char *utf8, int len);
 void gfx_draw_text(const kb_font_t *f, int x, int y, const char *utf8, uint16_t color);
+void gfx_draw_text_n(const kb_font_t *f, int x, int y, const char *utf8, int len, uint16_t color);
 void gfx_draw_text_centered(const kb_font_t *f, int cx, int y, const char *utf8, uint16_t color);
 
 /* Greedy per-character word wrap. Fills `lines` with (start,len) byte ranges

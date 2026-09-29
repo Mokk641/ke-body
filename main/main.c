@@ -1,18 +1,14 @@
 /* ke-body: a small body for the Waveshare ESP32-S3-Touch-LCD-3.5-C.
  *
- *  phase 1 (face)
- *  - boot: big kaomoji "(—_—)", IP in the corner, HTTP /ping /face /say
- *  - short tap anywhere: "(—//—)" for 2 s
- *  phase 2 (ears and mouth)
- *  - hold >= 0.5 s: record from the mic (16 kHz mono) until release (max 30 s),
- *    then POST the WAV to the server URL from NVS (serial: server http://host:8770/hear)
- *  - POST /play (WAV) plays on the speaker; POST /volume 0-100
- *  phase 3
- *  - AXP2101 power rails set up as in the official examples (speaker amp supply)
- *  - rotation 0/90/180/270 (default 90), brightness, night dimming (NTP), dark/light theme
+ *  phase 1  face, Wi-Fi, HTTP /ping /face /say, tap = blush
+ *  phase 2  hold to talk (16 kHz WAV -> bridge /hear), /play, /volume
+ *  phase 3  AXP2101 rails, rotation, brightness, night dimming, dark theme, amp enable (TCA9554 P7)
+ *  phase 4  chat log + quick buttons (-> bridge /msg), animations, IMU (shake / face-down),
+ *           silent alert, camera + gallery (-> bridge /photo), remote /snap when "peek" is on
  */
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -29,20 +25,23 @@
 #include "audio.h"
 #include "settings.h"
 #include "uploader.h"
+#include "bridge.h"
+#include "app_actions.h"
 
 static const char *TAG = "main";
 
 #define WAITING_TEXT   "等待配网\n串口输入: wifi <ssid> <password>"
-#define LONG_PRESS_US  500000
 
 static bool s_showing_waiting;
+
+/* ---- Wi-Fi state -> screen ---------------------------------------------------- */
 
 static void on_wifi_state(wifi_mgr_state_t st, const char *ip)
 {
     switch (st) {
     case WIFI_MGR_NO_CREDS:
         ui_set_corner("等待配网");
-        ui_set_say(WAITING_TEXT);
+        ui_toast(WAITING_TEXT, 60000);
         s_showing_waiting = true;
         break;
     case WIFI_MGR_CONNECTING:
@@ -50,7 +49,7 @@ static void on_wifi_state(wifi_mgr_state_t st, const char *ip)
         break;
     case WIFI_MGR_CONNECTED:
         ui_set_corner(ip);
-        if (s_showing_waiting) { ui_set_say(""); s_showing_waiting = false; }
+        if (s_showing_waiting) { ui_toast("", 0); s_showing_waiting = false; }
         http_api_start();
         light_start_sntp();
         break;
@@ -60,16 +59,18 @@ static void on_wifi_state(wifi_mgr_state_t st, const char *ip)
     }
 }
 
+/* ---- recording -> bridge /hear ---------------------------------------------------- */
+
 /* Runs in the audio task right after a recording ends. */
 static void send_recording(const uint8_t *wav, size_t len)
 {
     char url[160];
     if (!settings_get_str(SETTINGS_KEY_SERVER_URL, url, sizeof url)) {
-        ui_set_say("未设置服务器地址\n串口输入: server http://电脑IP:8770/hear");
+        ui_toast("未设置服务器地址\n串口输入: server http://电脑IP:8770/hear", 4000);
         return;
     }
     if (wifi_mgr_state() != WIFI_MGR_CONNECTED) {
-        ui_set_say("没有网络，录音没发出去");
+        ui_toast("没有网络，录音没发出去", 3000);
         return;
     }
     ui_override_corner("发送中");
@@ -79,11 +80,11 @@ static void send_recording(const uint8_t *wav, size_t len)
     if (err != ESP_OK) {
         char msg[96];
         snprintf(msg, sizeof msg, "发送失败: %s", esp_err_to_name(err));
-        ui_set_say(msg);
+        ui_toast(msg, 3000);
     } else if (status / 100 != 2) {
         char msg[64];
         snprintf(msg, sizeof msg, "服务器返回 %d", status);
-        ui_set_say(msg);
+        ui_toast(msg, 3000);
     }
 }
 
@@ -108,30 +109,75 @@ static void on_audio(audio_evt_t evt, const uint8_t *wav, size_t len)
     }
 }
 
-/* short tap -> blush; hold >= 0.5 s -> record until release */
+/* ---- touch actions (called from the touch task via ui_touch) ------------------------ */
+
+void app_send_text(const char *text)
+{
+    if (!text || !text[0]) return;
+    ui_chat_add(CHAT_HER, text);
+    bridge_send_text(text);
+}
+
+void app_on_tap(int hit)
+{
+    ui_state_t *s = NULL;
+    if (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_TEXT_BTN0 + UI_MAX_BUTTONS) {
+        s = malloc(sizeof(ui_state_t));
+        if (!s) return;
+        ui_get_state_copy(s);
+        int i = hit - UI_HIT_TEXT_BTN0;
+        if (i < s->text_btn_n) app_send_text(s->text_btn[i].text);
+        free(s);
+        return;
+    }
+    if (hit >= UI_HIT_EMOJI_BTN0 && hit < UI_HIT_EMOJI_BTN0 + UI_MAX_BUTTONS) {
+        s = malloc(sizeof(ui_state_t));
+        if (!s) return;
+        ui_get_state_copy(s);
+        int i = hit - UI_HIT_EMOJI_BTN0;
+        if (i < s->emoji_btn_n) app_send_text(s->emoji_btn[i].text);
+        free(s);
+        return;
+    }
+    switch (hit) {
+    case UI_HIT_FACE:
+    case UI_HIT_CHAT:
+        ui_blush();
+        break;
+    case UI_HIT_CAM_BTN:
+        ui_toast("相机还没接上", 1500);
+        break;
+    default:
+        break;
+    }
+}
+
+void app_on_long_press(void)
+{
+    if (audio_ready()) audio_record_start();
+    else ui_blush();
+}
+
+void app_on_long_release(void)
+{
+    audio_record_stop();
+}
+
+void app_on_swipe(int dir)
+{
+    (void)dir;
+}
+
+void app_on_touch_activity(void)
+{
+}
+
 static void touch_task(void *arg)
 {
-    bool was_down = false, long_started = false;
-    int64_t t_down = 0;
     for (;;) {
-        uint16_t x, y;
+        uint16_t x = 0, y = 0;
         bool down = board_touch_read(&x, &y);
-        int64_t now = esp_timer_get_time();
-        if (down && !was_down) {
-            t_down = now;
-            long_started = false;
-            ESP_LOGI(TAG, "touch down at %u,%u", x, y);
-        }
-        if (down && !long_started && now - t_down >= LONG_PRESS_US) {
-            long_started = true;
-            if (audio_ready()) audio_record_start();
-            else ui_blush();
-        }
-        if (!down && was_down) {
-            if (long_started) audio_record_stop();
-            else ui_blush();
-        }
-        was_down = down;
+        ui_touch(down, x, y);
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
@@ -147,19 +193,19 @@ void app_main(void)
 
     ESP_ERROR_CHECK(board_init());
 
-    /* power rails first (official examples do this before the codec) */
     if (pmic_init(board_i2c_bus()) != ESP_OK) {
         ESP_LOGE(TAG, "AXP2101 init failed; continuing without PMIC setup");
     }
 
-    ui_start();                 /* rotation/theme from NVS, first frame */
-    light_init();               /* brightness from NVS, night schedule */
+    ui_start();
+    light_init();
+    bridge_start();
 
     if (audio_init(board_i2c_bus(), on_audio) != ESP_OK) {
         ESP_LOGE(TAG, "audio init failed; recording/playback disabled");
     }
 
-    xTaskCreate(touch_task, "touch", 3072, NULL, 4, NULL);
+    xTaskCreate(touch_task, "touch", 4096, NULL, 4, NULL);
 
     wifi_mgr_start(on_wifi_state);
     console_cmd_start();

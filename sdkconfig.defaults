@@ -32,3 +32,8 @@ CONFIG_XPOWERS_ESP_IDF_NEW_API=y
 
 # NTP: primary ntp.aliyun.com, fallback pool.ntp.org
 CONFIG_LWIP_SNTP_MAX_SERVERS=2
+
+# Phase 4: camera (SCCB over the existing i2c_master bus), FAT long file names
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=64
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
