@@ -6,10 +6,14 @@ ke_send.py - send things to the ke-body board.
     ke_send.py say "你好呀"
     ke_send.py play hello.wav          # PCM 16-bit mono, 16000 or 24000 Hz
     ke_send.py volume 60
+    ke_send.py rotate 90               # 0 / 90 / 180 / 270
+    ke_send.py brightness 40           # 5-100
+    ke_send.py theme dark              # dark / light
     ke_send.py ping
 
 The board address comes from --board or the KE_BOARD environment variable
-(IP or host[:port]). Standard library only.
+(IP or host[:port]). HTTP proxy environment variables are ignored for the
+board (it is on the LAN). Standard library only.
 """
 import argparse
 import os
@@ -17,6 +21,9 @@ import struct
 import sys
 import urllib.error
 import urllib.request
+
+# The board is on the LAN: never go through HTTP(S)_PROXY for it.
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def wav_check(data):
@@ -43,11 +50,14 @@ def wav_check(data):
     return "no fmt chunk"
 
 
-def post(board, path, body, ctype):
+def request(board, path, body=None, ctype="text/plain; charset=utf-8", timeout=20):
     url = f"http://{board}{path}"
-    req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": ctype})
+    if body is None:
+        req = urllib.request.Request(url, method="GET")
+    else:
+        req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": ctype})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _opener.open(req, timeout=timeout) as r:
             return r.status, r.read().decode("utf-8", "replace").strip()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", "replace").strip()
@@ -62,6 +72,9 @@ def main():
     sub.add_parser("say").add_argument("text")
     sub.add_parser("play").add_argument("file")
     sub.add_parser("volume").add_argument("level", type=int)
+    sub.add_parser("rotate").add_argument("degrees", type=int, choices=[0, 90, 180, 270])
+    sub.add_parser("brightness").add_argument("level", type=int)
+    sub.add_parser("theme").add_argument("name", choices=["dark", "light"])
     args = ap.parse_args()
 
     if not args.board:
@@ -69,21 +82,26 @@ def main():
 
     try:
         if args.cmd == "ping":
-            with urllib.request.urlopen(f"http://{args.board}/ping", timeout=5) as r:
-                code, text = r.status, r.read().decode().strip()
+            code, text = request(args.board, "/ping", timeout=5)
         elif args.cmd == "face":
-            code, text = post(args.board, "/face", args.text.encode("utf-8"), "text/plain; charset=utf-8")
+            code, text = request(args.board, "/face", args.text.encode("utf-8"))
         elif args.cmd == "say":
-            code, text = post(args.board, "/say", args.text.encode("utf-8"), "text/plain; charset=utf-8")
+            code, text = request(args.board, "/say", args.text.encode("utf-8"))
         elif args.cmd == "volume":
-            code, text = post(args.board, "/volume", str(args.level).encode(), "text/plain")
+            code, text = request(args.board, "/volume", str(args.level).encode())
+        elif args.cmd == "rotate":
+            code, text = request(args.board, "/rotate", str(args.degrees).encode())
+        elif args.cmd == "brightness":
+            code, text = request(args.board, "/brightness", str(args.level).encode())
+        elif args.cmd == "theme":
+            code, text = request(args.board, "/theme", args.name.encode())
         elif args.cmd == "play":
             with open(args.file, "rb") as f:
                 data = f.read()
             warn = wav_check(data)
             if warn:
                 print(f"warning: {args.file}: {warn}", file=sys.stderr)
-            code, text = post(args.board, "/play", data, "audio/wav")
+            code, text = request(args.board, "/play", data, "audio/wav")
         else:
             ap.error("unknown command")
     except (urllib.error.URLError, OSError) as e:

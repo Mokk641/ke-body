@@ -34,3 +34,8 @@ esp_err_t audio_play_wav(uint8_t *wav, size_t len);
 
 esp_err_t audio_set_volume(int percent);   /* 0..100 */
 int audio_get_volume(void);
+
+/* Diagnostics for the serial console. */
+esp_err_t audio_test_tone(int ms);      /* play a 1 kHz sine through the normal playback path */
+void audio_dump_regs(void);             /* print ES8311 registers */
+esp_err_t audio_set_mic_gain(int step); /* 0..7 = 0..42 dB in 6 dB steps */

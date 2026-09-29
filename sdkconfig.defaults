@@ -25,3 +25,10 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # HTTP server: small requests only
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_HTTPD_MAX_URI_LEN=128
+
+# XPowersLib (AXP2101 PMIC driver from the official Waveshare examples)
+CONFIG_XPOWERS_CHIP_AXP2101=y
+CONFIG_XPOWERS_ESP_IDF_NEW_API=y
+
+# NTP: primary ntp.aliyun.com, fallback pool.ntp.org
+CONFIG_LWIP_SNTP_MAX_SERVERS=2

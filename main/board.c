@@ -3,7 +3,7 @@
  * Everything hardware-specific below is taken from the official repository
  * https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.5 :
  *   ESP-IDF/07_lvgl_wifi/components/esp_port/esp_3inch5_lcd_port.cpp  (SPI/LCD/backlight/touch)
- *   ESP-IDF/07_lvgl_wifi/main/main.cpp                                (I2C pins, TCA9554 reset)
+ *   ESP-IDF/07_lvgl_wifi/main/main.cpp                                (I2C pins, TCA9554 reset, rotation table)
  *   Arduino/examples/08_gfx_helloworld/08_gfx_helloworld.ino           (same pins, reset sequence)
  *
  *   LCD   : ST7796, 4-wire SPI, 320x480, MOSI=GPIO1 SCLK=GPIO5 DC=GPIO3, CS/RST not wired to the SoC
@@ -15,6 +15,7 @@
 #include "board.h"
 
 #include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -28,6 +29,7 @@
 #include "esp_lcd_st7796.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_check.h"
 #include "esp_log.h"
 
@@ -47,18 +49,9 @@ static const char *TAG = "board";
 #define TCA9554_ADDR   0x20
 #define FT6336_ADDR    0x38
 
-/* Orientation. The official ESP-IDF examples configure esp_lvgl_port with
- * mirror_x = 1 for the portrait (rotation 0) layout; see README "未验证" list. */
-#ifndef BOARD_LCD_MIRROR_X
-#define BOARD_LCD_MIRROR_X 1
-#endif
-#ifndef BOARD_LCD_MIRROR_Y
-#define BOARD_LCD_MIRROR_Y 0
-#endif
-
-/* Rows sent per SPI transaction when flushing the PSRAM framebuffer. */
-#define FLUSH_ROWS     24
-#define FLUSH_BYTES    (BOARD_LCD_W * FLUSH_ROWS * 2)
+/* Bytes per SPI transaction when flushing the PSRAM framebuffer:
+ * 24 rows in portrait (320 px wide) or 16 rows in landscape (480 px wide). */
+#define FLUSH_BYTES    (320 * 24 * 2)
 
 static i2c_master_bus_handle_t s_i2c;
 static i2c_master_dev_handle_t s_tca;
@@ -67,6 +60,9 @@ static esp_lcd_panel_io_handle_t s_io;
 static esp_lcd_panel_handle_t s_panel;
 static SemaphoreHandle_t s_flush_done;
 static uint8_t *s_bounce[2];
+static int s_rotation = 0;
+static int s_w = BOARD_LCD_W, s_h = BOARD_LCD_H;
+static bool s_touch_log;
 
 /* --- I2C helpers --- */
 static esp_err_t i2c_write_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val)
@@ -99,6 +95,11 @@ static esp_err_t i2c_init(void)
     return ESP_OK;
 }
 
+i2c_master_bus_handle_t board_i2c_bus(void)
+{
+    return s_i2c;
+}
+
 /* TCA9554 registers: 0 input, 1 output, 2 polarity, 3 config (1 = input).
  * Official sequence (main.cpp io_expander_init): pin1 output, low 100 ms, high 100 ms. */
 static esp_err_t lcd_hw_reset_via_expander(void)
@@ -116,6 +117,39 @@ static esp_err_t lcd_hw_reset_via_expander(void)
     vTaskDelay(pdMS_TO_TICKS(100));
     ESP_RETURN_ON_ERROR(i2c_write_reg(s_tca, 0x01, out | (1 << 1)), TAG, "tca high");
     vTaskDelay(pdMS_TO_TICKS(100));
+    return ESP_OK;
+}
+
+esp_err_t board_expander_set(int pin, int mode)
+{
+    if (pin < 0 || pin > 7 || mode < 0 || mode > 2) return ESP_ERR_INVALID_ARG;
+    uint8_t cfg, out;
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x03, &cfg, 1), TAG, "tca read cfg");
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x01, &out, 1), TAG, "tca read out");
+    if (mode == 2) {
+        cfg |= (1 << pin);
+        ESP_RETURN_ON_ERROR(i2c_write_reg(s_tca, 0x03, cfg), TAG, "tca cfg");
+    } else {
+        if (mode) out |= (1 << pin); else out &= ~(1 << pin);
+        ESP_RETURN_ON_ERROR(i2c_write_reg(s_tca, 0x01, out), TAG, "tca out");
+        cfg &= ~(1 << pin);
+        ESP_RETURN_ON_ERROR(i2c_write_reg(s_tca, 0x03, cfg), TAG, "tca cfg");
+    }
+    ESP_LOGI(TAG, "TCA9554 pin %d -> %s", pin, mode == 2 ? "input" : mode ? "high" : "low");
+    return ESP_OK;
+}
+
+esp_err_t board_expander_dump(void)
+{
+    uint8_t in, out, cfg;
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x00, &in, 1), TAG, "tca in");
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x01, &out, 1), TAG, "tca out");
+    ESP_RETURN_ON_ERROR(i2c_read_reg(s_tca, 0x03, &cfg, 1), TAG, "tca cfg");
+    printf("TCA9554 input=0x%02x output=0x%02x config=0x%02x (1=input)\n", in, out, cfg);
+    for (int p = 0; p < 8; p++) {
+        printf("  pin %d: %s, level %d%s\n", p, (cfg >> p) & 1 ? "input " : "output", (in >> p) & 1,
+               p == 1 ? "  (LCD reset)" : "");
+    }
     return ESP_OK;
 }
 
@@ -172,10 +206,38 @@ static esp_err_t lcd_init(void)
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), TAG, "reset");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), TAG, "init");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, true), TAG, "invert");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, BOARD_LCD_MIRROR_X, BOARD_LCD_MIRROR_Y), TAG, "mirror");
+    ESP_RETURN_ON_ERROR(board_lcd_set_rotation(0), TAG, "rotation");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), TAG, "disp on");
     return ESP_OK;
 }
+
+/* Official table (main.cpp, display_cfg.rotation for EXAMPLE_DISPLAY_ROTATION):
+ *   0: swap 0, mirror_x 1, mirror_y 0   (verified on hardware in phase 1)
+ *  90: swap 1, mirror_x 1, mirror_y 1
+ * 180: swap 0, mirror_x 0, mirror_y 1
+ * 270: swap 1, mirror_x 0, mirror_y 0 */
+esp_err_t board_lcd_set_rotation(int rotation)
+{
+    bool swap, mx, my;
+    switch (rotation) {
+    case 0:   swap = false; mx = true;  my = false; break;
+    case 90:  swap = true;  mx = true;  my = true;  break;
+    case 180: swap = false; mx = false; my = true;  break;
+    case 270: swap = true;  mx = false; my = false; break;
+    default: return ESP_ERR_INVALID_ARG;
+    }
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_swap_xy(s_panel, swap), TAG, "swap");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, mx, my), TAG, "mirror");
+    s_rotation = rotation;
+    s_w = swap ? BOARD_LCD_H : BOARD_LCD_W;
+    s_h = swap ? BOARD_LCD_W : BOARD_LCD_H;
+    ESP_LOGI(TAG, "rotation %d -> %dx%d (swap=%d mx=%d my=%d)", rotation, s_w, s_h, swap, mx, my);
+    return ESP_OK;
+}
+
+int board_lcd_rotation(void) { return s_rotation; }
+int board_lcd_width(void) { return s_w; }
+int board_lcd_height(void) { return s_h; }
 
 static esp_err_t backlight_init(void)
 {
@@ -197,11 +259,6 @@ static esp_err_t backlight_init(void)
         .hpoint = 0,
     };
     return ledc_channel_config(&c);
-}
-
-i2c_master_bus_handle_t board_i2c_bus(void)
-{
-    return s_i2c;
 }
 
 void board_backlight_set(uint8_t percent)
@@ -229,18 +286,20 @@ esp_err_t board_init(void)
 
 void board_lcd_flush(const uint16_t *fb)
 {
+    const int w = s_w, h = s_h;
+    const int chunk_rows = FLUSH_BYTES / (w * 2);
     int buf = 0;
     int inflight = 0;   /* colour transfers queued but not yet reported done */
-    for (int y = 0; y < BOARD_LCD_H; y += FLUSH_ROWS) {
-        int rows = (y + FLUSH_ROWS <= BOARD_LCD_H) ? FLUSH_ROWS : BOARD_LCD_H - y;
-        size_t bytes = (size_t)rows * BOARD_LCD_W * 2;
+    for (int y = 0; y < h; y += chunk_rows) {
+        int rows = (y + chunk_rows <= h) ? chunk_rows : h - y;
+        size_t bytes = (size_t)rows * w * 2;
         /* both bounce buffers busy: wait for the older transfer before reusing */
         if (inflight == 2) {
             xSemaphoreTake(s_flush_done, portMAX_DELAY);
             inflight--;
         }
-        memcpy(s_bounce[buf], fb + (size_t)y * BOARD_LCD_W, bytes);
-        if (esp_lcd_panel_draw_bitmap(s_panel, 0, y, BOARD_LCD_W, y + rows, s_bounce[buf]) == ESP_OK) {
+        memcpy(s_bounce[buf], fb + (size_t)y * w, bytes);
+        if (esp_lcd_panel_draw_bitmap(s_panel, 0, y, w, y + rows, s_bounce[buf]) == ESP_OK) {
             inflight++;
         }
         buf ^= 1;
@@ -250,6 +309,8 @@ void board_lcd_flush(const uint16_t *fb)
         inflight--;
     }
 }
+
+void board_touch_log(bool on) { s_touch_log = on; }
 
 bool board_touch_read(uint16_t *x, uint16_t *y)
 {
@@ -261,7 +322,35 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
     if (n == 0 || n > 2) return false;
     uint8_t d[4];
     if (i2c_read_reg(s_tp, 0x03, d, 4) != ESP_OK) return false;
-    if (x) *x = ((d[0] & 0x0F) << 8) | d[1];
-    if (y) *y = ((d[2] & 0x0F) << 8) | d[3];
+    int rx = ((d[0] & 0x0F) << 8) | d[1];   /* raw, portrait frame 0..319 */
+    int ry = ((d[2] & 0x0F) << 8) | d[3];   /* raw, portrait frame 0..479 */
+
+    /* Official esp_lcd_touch flags per rotation (esp_3inch5_touch_port_init) applied
+     * the way esp_lcd_touch does it: mirror first, then swap.
+     *   90: mirror_y + swap    180: mirror_x + mirror_y    270: mirror_x + swap */
+    int mx = rx, my = ry;
+    switch (s_rotation) {
+    case 90:  my = BOARD_LCD_H - ry; break;
+    case 180: mx = BOARD_LCD_W - rx; my = BOARD_LCD_H - ry; break;
+    case 270: mx = BOARD_LCD_W - rx; break;
+    default: break;
+    }
+    int lx = mx, ly = my;
+    if (s_rotation == 90 || s_rotation == 270) { lx = my; ly = mx; }
+    if (lx < 0) lx = 0;
+    if (ly < 0) ly = 0;
+    if (lx >= s_w) lx = s_w - 1;
+    if (ly >= s_h) ly = s_h - 1;
+    if (x) *x = (uint16_t)lx;
+    if (y) *y = (uint16_t)ly;
+
+    if (s_touch_log) {
+        static int64_t last_log;
+        int64_t now = esp_timer_get_time();
+        if (now - last_log > 200000) {
+            last_log = now;
+            printf("touch raw=(%d,%d) rot%d -> (%d,%d) of %dx%d\n", rx, ry, s_rotation, lx, ly, s_w, s_h);
+        }
+    }
     return true;
 }

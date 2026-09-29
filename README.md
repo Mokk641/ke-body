@@ -5,8 +5,9 @@
 
 | 版本 | 固件 | 内容 | 真机状态 |
 |------|------|------|----------|
-| v1 | `release/ke-body-v1.bin` | 第一期：脸、配网、HTTP `/face /say /ping`、触摸脸红 | **已上板验证**（屏幕、方向、触摸、等待配网界面正常；Wi-Fi/HTTP 未测） |
-| v2 | `release/ke-body-v2.bin` | 第一期 + 第二期：按住说话录音上传、`/play` 喇叭播放、`/volume`、电脑端脚本 | **未在真机运行过**，见 §6 |
+| v1 | `release/ke-body-v1.bin` | 第一期：脸、配网、HTTP `/face /say /ping`、触摸脸红 | 已上板验证 |
+| v2 | `release/ke-body-v2.bin` | + 第二期：按住说话录音上传、`/play` 播放、`/volume`、电脑端脚本 | 已上板：启动、Wi-Fi、HTTP、`face/say` 正常；**喇叭无声**；录音未测 |
+| v3 | `release/ke-body-v3.bin` | + 第三期：AXP2101 电源初始化（修喇叭）、横屏、亮度、夜间变暗、黑底白字、串口诊断命令 | **未在真机运行过**，见 §6 |
 
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
@@ -18,7 +19,7 @@
 
 | # | 功能 | 说明 |
 |---|------|------|
-| 1 | 开机显示「脸」 | 浅色底，中间大号颜文字，默认 `(—_—)` |
+| 1 | 开机显示「脸」 | 中间大号颜文字，默认 `(—_—)` |
 | 2 | 连 Wi-Fi（2.4G） | 账号密码只存 NVS，**不在仓库里**。没配置时屏幕显示「等待配网」 |
 | 3 | 串口配网 | 串口命令 `wifi <ssid> <password>` 写入 NVS 后自动重启 |
 | 4 | 显示 IP | 连上后右上角小字显示 IP |
@@ -33,9 +34,19 @@
 | 8 | 录音上传 | 松手后把 WAV `POST` 到 NVS 里保存的地址（`Content-Type: audio/wav`），串口命令 `server <url>` 设置；没设置时气泡提示 |
 | 9 | 出声 | `POST /play` body 是 WAV（16kHz 或 24kHz 单声道 16bit），喇叭播放，播放时脸 `(—▽—)` |
 | 10 | 音量 | 默认 70；`POST /volume` body 0–100；串口 `volume <n>` |
-| 11 | 电脑端 | `pc/ke_bridge.py` 收录音存文件；`pc/ke_send.py` 给板子发 face/say/play/volume |
+| 11 | 电脑端 | `pc/ke_bridge.py` 收录音存文件；`pc/ke_send.py` 给板子发 face/say/play/volume… |
 
-短按（<0.5 秒）仍然是脸红。语音转文字、文字转语音不在固件里，电脑那边另外接。
+### 第三期
+
+| # | 功能 | 说明 |
+|---|------|------|
+| 12 | 修喇叭 | 开机按官方例子初始化 **AXP2101** 电源轨（喇叭功放的供电最可能在这里）；ES8311 初始化补齐官方 esp_codec_dev 驱动写的寄存器；串口新增 `pmic` / `tca` / `audio test` / `audio regs` 诊断命令 |
+| 13 | 横屏 | `rotate 0|90|180|270`、`POST /rotate`，存 NVS，**默认 90**。触摸坐标跟着转；`touchlog on` 打印坐标 |
+| 14 | 亮度 | `bright <5-100>`、`POST /brightness`，存 NVS，默认 80 |
+| 15 | 夜间变暗 | 连网后 NTP 对时（`ntp.aliyun.com`，备用 `pool.ntp.org`，东八区）。`night 23:00 07:00 20` 存 NVS，`night off` 关闭。**默认开，23:00–07:00 亮度 20** |
+| 16 | 黑底白字 | `theme dark|light`、`POST /theme`，存 NVS，**默认 dark**（气泡深色底浅色字） |
+
+语音转文字、文字转语音不在固件里，电脑那边另外接。
 
 ---
 
@@ -46,19 +57,19 @@
 3. 一行烧录（合并好的单文件固件，从地址 0 写入）：
 
 ```
-python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v2.bin
+python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.bin
 ```
 
-（要回到第一期就烧 `release/ke-body-v1.bin`，两个文件都保留。NVS 里的 Wi-Fi 和服务器地址在两版之间通用，重新烧录不会丢。）
+（v1 / v2 文件都保留，换文件名即可回退。NVS 里的 Wi-Fi、服务器地址、亮度等设置在各版本之间通用，重新烧录不会丢。）
 
 如果板子没自动进入下载模式：按住 **BOOT** 键，按一下 **RESET**，松开 BOOT，再执行上面的命令。
-烧完后按一下 RESET（或重新插电）。冷上电后固件会主动软复位一次（见 §6），属正常现象。
+烧完后按一下 RESET（或重新插电）。冷上电后固件会主动软复位一次（官方例子的做法），属正常现象。
 
 如果 esptool 提示 flash 大小和固件头不符，可以加 `--flash-size 16MB`（微雪官方示例配置为 16MB Flash，QIO 80MHz）。
 
 注意：上面是 esptool **v5** 的写法（本仓库用 esptool v5.4.0 生成固件）。如果你装的是 esptool v4，子命令是下划线：`write_flash`。想快一点可以加 `-b 921600`。
 
-`release/*.bin` 内容 = bootloader（0x0）+ 分区表（0x8000）+ 应用（0x10000），中间用 0xFF 填充。v1 约 3.0MB，v2 约 3.2MB。
+`release/*.bin` 内容 = bootloader（0x0）+ 分区表（0x8000）+ 应用（0x10000），中间用 0xFF 填充。v3 约 3.3MB。
 
 ---
 
@@ -72,39 +83,39 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v2.
 |------|------|
 | `wifi <ssid> <password>` | 保存 Wi-Fi 凭据到 NVS 并重启。含空格用双引号：`wifi "My Home" "pass word"`；开放网络密码留空 |
 | `wifi` / `wifi clear` | 显示当前 SSID、状态、IP / 清除凭据并重启 |
-| `server http://192.168.1.5:8770/hear` | 录音上传地址（电脑上 `ke_bridge.py` 的地址），立即生效，不用重启 |
+| `server http://192.168.1.5:8770/hear` | 录音上传地址（电脑上 `ke_bridge.py` 的地址），立即生效 |
 | `server` / `server clear` | 显示 / 清除 |
 | `volume <0-100>` / `volume` | 喇叭音量（只在内存里，重启回到默认 70） |
+| `rotate 0|90|180|270` / `rotate` | 屏幕方向，存 NVS，立即生效 |
+| `bright <5-100>` / `bright` | 背光亮度，存 NVS |
+| `night 23:00 07:00 20` / `night off` / `night` | 夜间自动变暗：开始 结束 亮度；`night` 显示当前时间、是否已对时、是否处于夜间 |
+| `theme dark|light` / `theme` | 黑底白字 / 白底黑字，存 NVS |
+| `touchlog on|off` | 按住屏幕时打印原始坐标和换算后的坐标（每 200ms 一行） |
+| `pmic` / `pmic <rail> on|off` / `pmic init` | AXP2101：打印所有电源轨状态和电压 / 单独开关某一路（`dc1..dc5 aldo1..aldo4 bldo1 bldo2 dldo1 dldo2 cpusldo`）/ 重新跑一遍初始化 |
+| `tca` / `tca <pin> 0|1|in` | TCA9554 扩展 IO：打印 8 个引脚状态 / 把某脚设成输出低、输出高或输入（**pin 1 是屏幕复位，别动**） |
+| `audio test [ms]` | 固件内部生成 1kHz 正弦音（16k 单声道，默认 1 秒）走正常播放通道，不经过 HTTP |
+| `audio regs` | 打印 ES8311 全部寄存器和芯片 ID |
+| `audio gain <0-7>` | 麦克风 PGA 增益，0=0dB，每步 6dB，默认 5（30dB） |
 | `face <颜文字>` / `say <文字>` | 本地测试屏幕，不走网络 |
 | `help` | 列出所有命令 |
-
-保存 Wi-Fi 后板子自动重启，连上路由器后右上角显示 IP。没有凭据时右上角显示「等待配网」，气泡里提示串口命令。断线会每 3 秒自动重连。
 
 ### 3.2 HTTP 接口（局域网，端口 80）
 
 假设板子 IP 是 `192.168.1.23`：
 
 ```
-curl http://192.168.1.23/ping
-# -> ok
-
-curl -X POST --data-binary "(´・ω・`)♡" http://192.168.1.23/face
-# 屏幕中间换成这行颜文字（最多 20 个字符；超出截断；空串恢复默认脸）
-
-curl -X POST --data-binary "你好呀，我是小身体。" http://192.168.1.23/say
-# 显示在脸下面的气泡里（最多 60 个字符，自动换行，最多 6 行；空串清空气泡）
-
+curl http://192.168.1.23/ping                                            # -> ok
+curl -X POST --data-binary "(´・ω・`)♡" http://192.168.1.23/face        # 最多 20 字符；空串恢复默认脸
+curl -X POST --data-binary "你好呀，我是小身体。" http://192.168.1.23/say   # 最多 60 字符；空串清空气泡
 curl -X POST -H "Content-Type: audio/wav" --data-binary @hello.wav http://192.168.1.23/play
-# 喇叭播放。要求 PCM 16bit，单声道（双声道也收，取左右平均），16000 或 24000 Hz
-#（8k/11.025k/12k/22.05k/32k/44.1k/48k 也接受）。最大 3MB。新的 /play 会打断正在放的
-
-curl -X POST --data-binary "60" http://192.168.1.23/volume
-# 音量 0-100
+        # PCM 16bit，单声道（双声道取平均），16000 或 24000 Hz（8k~48k 也接受），最大 3MB；新的 /play 打断正在放的
+curl -X POST --data-binary "60"    http://192.168.1.23/volume            # 0-100
+curl -X POST --data-binary "90"    http://192.168.1.23/rotate            # 0 / 90 / 180 / 270，存 NVS
+curl -X POST --data-binary "40"    http://192.168.1.23/brightness        # 5-100，存 NVS（低于 5 按 5）
+curl -X POST --data-binary "light" http://192.168.1.23/theme             # dark / light，存 NVS
 ```
 
-接口只解析 body，忽略 `/face` `/say` 的 Content-Type；body 末尾的换行会被去掉。接口没有任何鉴权，只在受信任的局域网内用。
-
-Windows PowerShell 里用 `Invoke-WebRequest` 时注意把 body 按 UTF-8 发送，或者直接用下面的 `ke_send.py`。
+接口只解析 body；body 末尾的换行会被去掉。接口没有任何鉴权，只在受信任的局域网内用。
 
 ### 3.3 电脑端脚本（`pc/`，只用 Python 标准库）
 
@@ -118,7 +129,7 @@ python pc/ke_bridge.py
 板子每次按住说话松手后，会把 WAV `POST` 到 `/hear`，脚本存成 `pc/inbox/年月日-时分秒.wav`（16kHz 单声道 16bit）并在控制台打印一行文件名。`pc/inbox/` 已加入 `.gitignore`。
 板子上要先设置：`server http://<电脑IP>:8770/hear`。Windows 防火墙第一次会弹窗，允许专用网络访问即可。
 
-**给板子发东西：**
+**给板子发东西**（脚本对板子的请求**不走** `HTTP_PROXY` 等代理环境变量，不用再设 `NO_PROXY`）：
 
 ```
 set KE_BOARD=192.168.1.23          # 或者每次加 --board 192.168.1.23
@@ -127,6 +138,9 @@ python pc/ke_send.py face "(—ω—)"
 python pc/ke_send.py say "今天天气不错"
 python pc/ke_send.py play hello.wav     # 会先检查 WAV 头，不合规打印 warning 但照样发
 python pc/ke_send.py volume 60
+python pc/ke_send.py rotate 90
+python pc/ke_send.py brightness 40
+python pc/ke_send.py theme dark
 ```
 
 ### 3.4 按住说话的流程
@@ -137,6 +151,20 @@ python pc/ke_send.py volume 60
 4. 发送期间（最长 15 秒超时）板子不处理新的录音和播放；这期间按住再松开会被忽略。
 5. 播放中长按会打断播放并开始录音。
 
+### 3.5 喇叭排查步骤（第三期）
+
+v2 喇叭无声，v3 做了两处改动 + 一组诊断命令。烧好 v3 后按这个顺序试：
+
+1. 看开机串口日志：
+   - `pmic: AXP2101 chip id 0x4a`（AXP2101 的 ID 是 0x4A）后面跟一张各电源轨 ON/off 和电压的表。没有这行 → PMIC 没应答，看 §6。
+   - `audio: ES8311 found: id 0x8311 version xx` → 编解码芯片在 I2C 上应答正常。
+   - `audio: ready (volume 70)`。
+2. 串口 `audio test` → 板子自己发 1 秒 1kHz 正弦音。日志会打印 `play done: N/N frames, M bytes on I2S in ~1000 ms`，说明 I2S 在正常写数据。**这时候有声** → 硬件通了，之前无声是 v2 少了电源初始化；再用 `ke_send.py play` 验证 HTTP 通道。
+3. 还是没声 → `pmic` 看电源轨。然后逐个试：`pmic aldo1 off` / `on`、`dldo1`、`dldo2`、`dc3`…每切一次跑一遍 `audio test`。第三方 xiaozhi 固件（这块板上语音可用）只开了 `aldo1`(3.3V)、`bldo1`(1.5V)、`bldo2`(2.8V)，其余全关。
+4. 还是没声 → `tca` 看扩展 IO 状态；xiaozhi 固件把 **pin 0 设为输出低**（官方例子不动它）。试 `tca 0 0` 和 `tca 0 1` 后各跑一次 `audio test`。
+5. 还是没声 → `audio regs` 把寄存器 dump 发给我；重点看 `12`（DAC 电源，应为 00）、`13`（应为 10）、`31`（静音位，应为 00）、`32`（DAC 音量，70% 对应 b2）。
+6. 有声但很小 → `volume 100` 试上限；默认值可改 `main/audio.h` 的 `AUDIO_DEFAULT_VOLUME`。
+
 ---
 
 ## 4. 硬件资料来源（以官方为准）
@@ -144,17 +172,20 @@ python pc/ke_send.py volume 60
 所有引脚、驱动芯片、初始化顺序都取自微雪官方代码仓库，没有凭记忆写：
 
 - 官方仓库：**https://github.com/waveshareteam/ESP32-S3-Touch-LCD-3.5**（本固件参考的提交：`283ec84`，2026-05-28）
-  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_3inch5_lcd_port.cpp` — SPI/LCD/背光/触摸引脚与初始化
-  - `ESP-IDF/07_lvgl_wifi/main/main.cpp` — I2C 引脚、TCA9554 复位 LCD 的顺序、LVGL 显示方向设置
+  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_3inch5_lcd_port.cpp` — SPI/LCD/背光/触摸引脚与初始化，各方向的触摸 swap/mirror 表
+  - `ESP-IDF/07_lvgl_wifi/main/main.cpp` — I2C 引脚、TCA9554 复位 LCD 的顺序、**各方向的显示 swap/mirror 表**（第三期横屏用）
   - `ESP-IDF/07_lvgl_wifi/components/esp_lcd_st7796/` — ST7796 面板驱动（**原样拷贝到本仓库 `components/esp_lcd_st7796/`**，Apache-2.0）
-  - `ESP-IDF/07_lvgl_wifi/components/esp_lcd_touch_ft6336/` — FT6336 寄存器定义（本固件自己按同样的寄存器读取，不依赖 esp_lcd_touch 组件）
-  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_es8311_port.cpp` — **I2S 引脚、ES8311 地址、无功放使能脚**（第二期）
-  - `Arduino/examples/01_audio_out`、`04_es8311_example` — ES8311 初始化顺序、音量 70、模拟麦克风（第二期）
-  - `Arduino/libraries/es8311/` — Espressif 的 es8311 驱动（Apache-2.0），**拷贝到本仓库 `components/es8311/`，只把 I2C 读写层从 Arduino `Wire` 改成 ESP-IDF `i2c_master`**，其余原样
+  - `ESP-IDF/07_lvgl_wifi/components/esp_lcd_touch_ft6336/` — FT6336 寄存器定义
+  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_es8311_port.cpp` — I2S 引脚、ES8311 地址、无功放使能脚
+  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_axp2101_port.cpp` — **AXP2101 电源轨设置**（第三期，`main/pmic.cpp` 逐行照抄电压和使能，去掉了看门狗和中断）
+  - `ESP-IDF/07_lvgl_wifi/components/XPowersLib/` — AXP2101 驱动 XPowersLib（MIT），**拷贝到本仓库 `components/XPowersLib/`**（只留 src 和 Kconfig）
+  - `Arduino/examples/01_audio_out`、`04_es8311_example` — ES8311 初始化顺序、音量 70、模拟麦克风
+  - `Arduino/libraries/es8311/` — Espressif 的 es8311 驱动（Apache-2.0），**拷贝到本仓库 `components/es8311/`**，I2C 层改成 ESP-IDF `i2c_master`，另加两个裸寄存器读写函数供诊断
   - `ESP-IDF/*/sdkconfig.defaults` 与 `partitions.csv` — Flash 16MB / QIO / 80MHz，8MB 八线 PSRAM，分区表
-  - `Arduino/examples/08_gfx_helloworld` — 同样的引脚和 TCA9554 复位序列（交叉验证）
-- ESP-IDF 自带例子 `examples/peripherals/i2s/i2s_codec/i2s_es8311`（ESP-IDF v5.4.4）— 同一个 es8311 驱动的标准用法（16kHz、16bit、立体声槽位、MCLK 走 MCLK 脚）
-- 微雪 wiki 页面（本次开发环境的网络策略封了 waveshare.com / waveshare.net / docs.waveshare.com，**没能直接打开**，以上信息全部来自官方 GitHub 仓库）：
+- Espressif `esp_codec_dev` 的 ES8311 驱动（官方例子实际用的驱动，`esp-adf/components/esp_codec_dev/device/es8311/es8311.c`）— 第三期把它 `es8311_open/es8311_start` 里多写的寄存器（0x0B 0x0C 0x10 0x11 0x1B 0x44 0x17 0x15 0x45）补进了本固件的初始化
+- ESP-IDF 自带例子 `examples/peripherals/i2s/i2s_codec/i2s_es8311`（ESP-IDF v5.4.4）— I2S 全双工 16bit 立体声、MCLK 走 MCLK 脚
+- 第三方交叉验证：xiaozhi-esp32 的板级文件 `main/boards/waveshare/esp32-s3-touch-lcd-3.5/`（这块板上语音功能可用）— AXP2101 只开 ALDO1/BLDO1/BLDO2，TCA9554 pin0 拉低；横屏配置 swap_xy 与官方一致
+- 微雪 wiki 页面（本次开发环境的网络策略封了 waveshare.com / waveshare.net / docs.waveshare.com，**没能直接打开**）：
   - https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.5
   - https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-3.5
 
@@ -170,18 +201,16 @@ python pc/ke_send.py volume 60
 | 触摸芯片 | **FT6336**，I2C 地址 0x38，INT/RST 不接 SoC | `esp_lcd_touch_ft6336.h` |
 | I2C | SDA=GPIO8，SCL=GPIO7 | `main.cpp` |
 | 音频编解码 | **ES8311**，I2C 地址 0x18，I2S0：MCLK=GPIO12，BCLK=GPIO13，LRCK=GPIO15，DOUT(ESP→DAC)=GPIO16，DIN(ADC→ESP)=GPIO14 | `esp_es8311_port.cpp` |
-| 功放 | 官方例子 `pa_pin = GPIO_NUM_NC`，没有功放使能脚，喇叭默认常通 | `esp_es8311_port.cpp` |
-| 麦克风 | ES8311 模拟麦克风输入（`es8311_microphone_config(false)`），本固件 PGA 增益 30dB | Arduino 例子；增益值是本固件选的 |
-| 电源管理 | AXP2101（I2C 0x34） | 官方 ESP-IDF 例子有初始化；本固件**未初始化**，第一期实测屏幕不需要 |
-| 其它 | QMI8658 IMU、PCF85063 RTC、TF 卡、OV5640 | 不使用 |
-| 屏幕方向 | 竖屏 320×480，`mirror_x = 1`，`invert_color = 1`，BGR | 官方 3 个 LVGL 例子；**第一期真机验证正确** |
+| 功放 | 官方例子 `pa_pin = GPIO_NUM_NC`，没有功放使能脚 | `esp_es8311_port.cpp` |
+| 电源管理 | **AXP2101**，I2C 0x34。官方：DC1~5 3.3/1.0/3.3/1.0/3.3V，ALDO1~4 3.3V，BLDO1 1.5V，BLDO2 2.8V，DLDO1/2 3.3V，CPUSLDO 1.0V，除 DC1 外全部使能 | `esp_axp2101_port.cpp` |
+| 显示方向表 | 0: swap0 mx1 my0（已验证）；90: swap1 mx1 my1；180: swap0 mx0 my1；270: swap1 mx0 my0 | 官方 `main.cpp` |
+| 触摸方向表 | 0: 无；90: mirror_y+swap；180: mirror_x+mirror_y；270: mirror_x+swap（esp_lcd_touch 先镜像后交换） | 官方 `esp_3inch5_touch_port_init` + esp_lcd_touch 源码 |
 
 ### 4.2 音频实现说明
 
-- I2S 线上始终是 16bit 立体声（和官方 `esp_es8311_port.cpp`、ESP-IDF 例子一致）。录音取左右声道平均存成单声道；播放时单声道样本复制到左右两路。
-- 采样率按需切换：录音固定 16kHz；播放用 WAV 自己的采样率（16k/24k…），切换时先停 I2S 两个通道，重配时钟，再给 ES8311 重配分频（`es8311_sample_frequency_config`），MCLK = 256 × fs。
-- 录音缓冲 30 秒 × 16kHz × 2 字节 ≈ 960KB，放 PSRAM；`/play` 的 WAV 也整段收进 PSRAM 再播。
-- ES8311 在录音、播放之间不关闭，空闲时 I2S TX 自动清零（`auto_clear`），理论上不会有底噪循环。
+- I2S 线上始终是 16bit 立体声。录音取左右声道平均存成单声道；播放时单声道样本复制到左右两路。
+- 采样率按需切换：录音固定 16kHz；播放用 WAV 自己的采样率，切换时先停 I2S 两个通道，重配时钟，再给 ES8311 重配分频，MCLK = 256 × fs。
+- 录音缓冲 30 秒 ≈ 960KB 放 PSRAM；`/play` 的 WAV 整段收进 PSRAM 再播。空闲时 I2S TX 自动清零（`auto_clear`）。
 
 ---
 
@@ -190,27 +219,28 @@ python pc/ke_send.py volume 60
 ```
 CMakeLists.txt / sdkconfig.defaults / partitions.csv   ESP-IDF 工程
 main/
-  main.c          启动流程、Wi-Fi 状态 → 屏幕、触摸状态机（短按/长按）、录音上传
-  board.c/.h      板级：I2C、TCA9554 复位、ST7796、背光、FT6336
-  audio.c/.h      ES8311 + I2S：录音（WAV）、播放、音量、采样率切换
+  main.c          启动流程：板级 → PMIC → UI → 亮度 → 音频 → 触摸 → Wi-Fi → 串口
+  board.c/.h      板级：I2C、TCA9554、ST7796、旋转、背光、FT6336（含坐标换算、touchlog）
+  pmic.cpp/.h     AXP2101 电源轨（照官方例子），dump / 单路开关
+  audio.c/.h      ES8311 + I2S：录音、播放、音量、采样率切换、测试音、寄存器 dump
+  light.c/.h      亮度（NVS）+ 夜间变暗 + NTP
   uploader.c/.h   esp_http_client POST WAV
-  settings.c/.h   NVS 里的字符串设置（server_url）
-  ui.c/.h         UI 状态（互斥锁）+ 渲染任务 + 脸/角落的临时覆盖（脸红/在听/播放）
-  ui_render.c/.h  画面布局（纯 C，可在电脑上编译预览）
-  gfx.c/.h        小型软件渲染器：RGB565、圆角矩形、4bpp 抗锯齿文字、自动换行
-  kb_font.h       位图字体格式
-  fonts/          生成的字体（见下）
+  settings.c/.h   NVS 里的字符串设置
+  ui.c/.h         UI 状态 + 渲染任务 + 旋转/主题（NVS）+ 脸/角落临时覆盖
+  ui_render.c/.h  画面布局（纯 C，横竖屏、深浅两套配色）
+  gfx.c/.h        小型软件渲染器
+  kb_font.h / fonts/   位图字体
   wifi_mgr.c/.h   NVS 凭据 + STA 连接 + 自动重连
-  http_api.c/.h   /ping /face /say /play /volume
-  console_cmd.c/.h  串口命令 wifi / server / volume / face / say
+  http_api.c/.h   /ping /face /say /play /volume /rotate /brightness /theme
+  console_cmd.c/.h  串口命令
 components/esp_lcd_st7796/   官方 ST7796 驱动（原样拷贝）
 components/es8311/           官方 Arduino 库里的 Espressif es8311 驱动（I2C 层改为 i2c_master）
+components/XPowersLib/       官方例子用的 AXP2101 驱动（MIT）
 pc/ke_bridge.py              电脑端：收录音，存 pc/inbox/
-pc/ke_send.py                电脑端：给板子发 face / say / play / volume / ping
+pc/ke_send.py                电脑端：给板子发 face / say / play / volume / rotate / brightness / theme / ping
 tools/gen_fonts.py           字体生成脚本
-tools/host_preview.c         电脑上渲染画面到 PPM，检查布局和字体
-release/ke-body-v1.bin       第一期合并固件
-release/ke-body-v2.bin       第二期合并固件
+tools/host_preview.c         电脑上渲染画面到 PPM（支持横竖屏、深浅色）
+release/ke-body-v1.bin / v2 / v3   合并固件
 ```
 
 ### 5.1 字体方案
@@ -219,50 +249,45 @@ release/ke-body-v2.bin       第二期合并固件
 
 | 字体 | 像素 | 内容 | 来源 |
 |------|------|------|------|
-| face64 / face44 / face30 | 64/44/30 | ASCII + 约 280 个颜文字常用符号（— ︵ ♡ ∀ ω ´ ・ ≧ ≦ ° ╥ ▽ 〇 ヽ ﾉ 等） | DejaVu Sans，缺字回退文泉驿正黑 / Unifont |
-| text22 | 22 | ASCII + 中文标点 + **GB2312 全部 6763 个汉字**（含常用 3500 字，也含「嗯」「呗」等聊天常用二级字）+ 颜文字符号 | 文泉驿正黑（WenQuanYi Zen Hei） |
+| face64 / face44 / face30 | 64/44/30 | ASCII + 约 280 个颜文字常用符号 | DejaVu Sans，缺字回退文泉驿正黑 / Unifont |
+| text22 | 22 | ASCII + 中文标点 + **GB2312 全部 6763 个汉字** + 颜文字符号 | 文泉驿正黑（WenQuanYi Zen Hei） |
 | small14 | 14 | ASCII + 状态用的几十个汉字 | 文泉驿正黑 |
 
-位图总计约 1.9MB，全部放在 Flash（应用分区 6MB），不占 RAM。`/say` 遇到字库里没有的字会画一个空心方框。
-颜文字大字号会自动选择：先试 64px，放不下降到 44px、30px，30px 仍放不下则折成两行。
+位图总计约 1.9MB，全部放在 Flash，不占 RAM。字库里没有的字画一个空心方框。颜文字先试 64px，放不下降到 44px、30px，再放不下折两行。横屏时脸的可用宽度是 456px，长颜文字更容易保持 64px。
 
 字体版权：DejaVu（自由字体许可）、文泉驿正黑（GPLv2 + 字体嵌入例外）、GNU Unifont（GPLv2+ 字体例外 / OFL）。
 
-重新生成字体（需要 Pillow 和 fontTools）：
-
-```
-python3 -m venv .venv && .venv/bin/pip install pillow fonttools
-.venv/bin/python tools/gen_fonts.py
-```
+重新生成字体：`python3 -m venv .venv && .venv/bin/pip install pillow fonttools && .venv/bin/python tools/gen_fonts.py`
 
 ### 5.2 电脑上预览画面
 
 ```
 gcc -O1 -Imain -o preview tools/host_preview.c main/gfx.c main/ui_render.c main/fonts/font_*.c
-./preview out.ppm "(´・ω・\`)♡" "你好呀，我是小身体。" "192.168.1.23"
+./preview out.ppm "(´・ω・\`)♡" "你好呀，我是小身体。" "192.168.1.23" landscape dark
 ```
 
 ---
 
 ## 6. 未验证事项（没有实物，请上板确认）
 
-### 第一期（v1，已上板）
+### 已上板验证
 
-已验证：屏幕点亮、方向正确不镜像、等待配网界面、气泡、触摸脸红、不初始化 AXP2101 屏幕也能亮、冷上电软复位一次不影响使用。
-**仍未验证**：Wi-Fi 连接、IP 显示、HTTP `/ping /face /say`（还没配网）。
+v1：屏幕点亮、方向 0 正确不镜像、等待配网界面、气泡、触摸脸红、冷上电软复位一次不影响使用。
+v2：开机 `ES8311 in Slave mode and I2S format`、`audio: ready`；家里 2.4G Wi-Fi 连上；HTTP `/face /say` 200 ok 且屏幕跟着变。**喇叭无声**（`/play` 返回 200 但听不到）。录音未测。
 
-### 第二期（v2，未上板）
+### 第三期（v3，未上板）
 
-1. **整个音频链路没有在真机跑过**：ES8311 能否被 I2C 找到（地址 0x18）、录音是否有声、喇叭是否出声。
-2. **功放**：官方例子没有功放使能脚（`pa_pin = NC`），本固件假设喇叭功放常通。如果播放无声，首先怀疑功放需要某个 GPIO / TCA9554 引脚 / AXP2101 电源轨使能；官方 ESP-IDF 例子在 ES8311 之前会先跑 `esp_axp2101_port_init()` 把 DC2~5、ALDO1~4、BLDO1~2、DLDO1~2 全打开，本固件没做。
-3. **麦克风增益** 30dB 是本固件选的（官方 `esp_codec_dev` 测试代码用 40dB）。太小改 `main/audio.c` 的 `MIC_GAIN`（`ES8311_MIC_GAIN_36DB` / `42DB`），削波则调小。
-4. **左右声道**：录音取 L/R 平均。如果 ES8311 只在一路上输出 ADC 数据，录音幅度会比预期低 6dB，但仍然有声；播放把单声道复制到两路，不受影响。
-5. **采样率切换**（16k ↔ 24k）是在 I2S 全双工下重配两个通道的时钟再重配 ES8311 分频，逻辑按 ESP-IDF 驱动的要求写（先 disable 再 reconfig），没有实测。如果 24k 播放异常而 16k 正常，可以先在电脑上把 WAV 重采样到 16k 绕过。
-6. **触摸长按判定** 0.5 秒基于 30ms 轮询；FT6336 在手指持续按住时是否一直报告触点数 >0，未验证（第一期只验证了「按下瞬间」）。如果按住时触点时有时无，会表现为录音提前结束。
-7. **上传**：`esp_http_client` POST 到局域网电脑，15 秒超时，只支持 `http://`。30 秒录音约 960KB，在 2.4G Wi-Fi 上大约 1–3 秒。
-8. **`/play` 大文件**：最多 3MB 整段收进 PSRAM，HTTP 接收超时 10 秒/次。
-9. **音量映射**：`es8311_voice_volume_set(70)` 直接写 DAC 音量寄存器，实际响度取决于功放，可能需要调默认值 `AUDIO_DEFAULT_VOLUME`。
-10. 第一期遗留：Wi-Fi / HTTP 尚未在真机测试；串口控制台的行编辑在不同终端里的表现未验证。
+1. **AXP2101 初始化**：按官方例子把所有电源轨打开。风险：这是官方出厂固件的做法，应该安全；但如果某一路电压设置和板上实际不符，理论上可能影响外设。开机日志会打印 chip id（应为 0x4a）和每路状态；`pmic` 命令随时可查。
+2. **喇叭到底通不通**没法在这边知道，按 §3.5 的顺序试。已知的三个可疑点都做成了命令：电源轨（`pmic`）、扩展 IO pin 0（`tca`）、ES8311 寄存器（`audio regs`）。
+3. **ES8311 补写的寄存器**（0x0B 0x0C 0x10 0x11 0x1B 0x44 0x17 0x15 0x45）取自 esp_codec_dev 驱动，值照抄；只在本固件里编译过。
+4. **横屏方向 90 vs 270**：显示用官方表；90 和 270 都是横屏，只是上下颠倒，哪个 USB 口在你顺手的一边就用哪个。默认 90，不顺就 `rotate 270`。
+5. **触摸坐标换算**：按官方 esp_lcd_touch 的「先镜像后交换」实现，没验证。`touchlog on` 后按屏幕四个角看打印的换算坐标是否和屏幕位置一致（横屏左上角应接近 0,0，右下角接近 479,319）。目前固件只用「有没有按」，坐标错不影响功能，但第四期要用。
+6. **横屏排版**：脸中心 y=100（有气泡）/150（无），气泡最多 4 行，宽 456px。主机端预览过，真机没看。
+7. **亮度下限 5**：`bright 5` 在真机上是否还能看清没验证；如果全黑，串口 `bright 80` 恢复。
+8. **NTP**：`ntp.aliyun.com` 在家庭网络下一般几秒内对时；`night` 命令能看到「synced / NOT synced」。对时前夜间变暗不生效。时区写死东八区 `CST-8`。
+9. **夜间变暗和手动亮度**：夜间生效时背光取 min(夜间亮度, 手动亮度)；`bright` 改的是手动亮度，夜间时段里改完仍然被压到夜间值，这是有意的。
+10. **主题切换**是整帧重绘，切换瞬间会闪一下。
+11. 第二期遗留：录音、上传、24k 播放的采样率切换都没测；麦克风增益 30dB 是本固件选的（`audio gain` 可调）；按住时 FT6336 是否持续报告触点未验证。
 
 ---
 
@@ -277,13 +302,11 @@ cd esp-idf && ./install.sh esp32s3 && . ./export.sh
 cd /path/to/ke-body
 idf.py set-target esp32s3
 idf.py build
-idf.py merge-bin -o /绝对路径/ke-body/release/ke-body-v2.bin     # 生成合并固件（路径要写绝对路径，相对路径会落到 build/ 里）
+idf.py merge-bin -o /绝对路径/ke-body/release/ke-body-v3.bin     # 路径要写绝对路径，相对路径会落到 build/ 里
 ```
-
-编译完 `build/ke-body.bin` 是应用本体，`release/ke-body-v2.bin` 是把 bootloader（0x0）、分区表（0x8000）、应用（0x10000）合并后的单文件，直接从 0x0 烧。
 
 ---
 
 ## 8. 没做的事
 
-摄像头、SD 卡、IMU、RTC、侧面按键、电源管理、OTA、HTTPS、鉴权、语音识别 / 合成（电脑端另外接）。HTTP 接口没有任何认证，只应在受信任的局域网内使用。
+摄像头、SD 卡、IMU、RTC、侧面按键、OTA、HTTPS、鉴权、语音识别 / 合成（电脑端另外接）。HTTP 接口没有任何认证，只应在受信任的局域网内使用。

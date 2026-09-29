@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "ui_render.h"
 #include "audio.h"
+#include "light.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -122,12 +123,50 @@ static esp_err_t play_post(httpd_req_t *req)
     return ok(req);
 }
 
+static esp_err_t rotate_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    int r = atoi(body);
+    if (ui_set_rotation(r) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "rotate must be 0, 90, 180 or 270");
+    }
+    ESP_LOGI(TAG, "rotate: %d", r);
+    return ok(req);
+}
+
+static esp_err_t brightness_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    char *end;
+    long v = strtol(body, &end, 10);
+    if (end == body || v < 0 || v > 100) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "brightness must be 0-100 (values below 5 become 5)");
+    }
+    light_set_bright((int)v);
+    ESP_LOGI(TAG, "brightness: %d", light_get_bright());
+    return ok(req);
+}
+
+static esp_err_t theme_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    if (ui_set_theme(body) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "theme must be dark or light");
+    }
+    ESP_LOGI(TAG, "theme: %s", body);
+    return ok(req);
+}
+
 esp_err_t http_api_start(void)
 {
     if (s_server) return ESP_OK;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 80;
     cfg.lru_purge_enable = true;
+    cfg.max_uri_handlers = 12;
     cfg.recv_wait_timeout = 10;
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) {
@@ -140,10 +179,13 @@ esp_err_t http_api_start(void)
         { .uri = "/say",    .method = HTTP_POST, .handler = say_post },
         { .uri = "/play",   .method = HTTP_POST, .handler = play_post },
         { .uri = "/volume", .method = HTTP_POST, .handler = volume_post },
+        { .uri = "/rotate", .method = HTTP_POST, .handler = rotate_post },
+        { .uri = "/brightness", .method = HTTP_POST, .handler = brightness_post },
+        { .uri = "/theme",  .method = HTTP_POST, .handler = theme_post },
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(s_server, &routes[i]);
     }
-    ESP_LOGI(TAG, "listening on :80  (GET /ping, POST /face /say /play /volume)");
+    ESP_LOGI(TAG, "listening on :80  (GET /ping, POST /face /say /play /volume /rotate /brightness /theme)");
     return ESP_OK;
 }

@@ -465,3 +465,15 @@ es8311_handle_t es8311_create(i2c_master_bus_handle_t bus, const uint16_t dev_ad
     sensor->dev_addr = dev_addr;
     return (es8311_handle_t) sensor;
 }
+
+/* ke-body addition: raw register read for diagnostics (`audio regs` on the console). */
+esp_err_t es8311_read_register(es8311_handle_t dev, uint8_t reg_addr, uint8_t *reg_value)
+{
+    return es8311_read_reg(dev, reg_addr, reg_value);
+}
+
+/* ke-body addition: raw register write (used to match the esp_codec_dev init sequence). */
+esp_err_t es8311_write_register(es8311_handle_t dev, uint8_t reg_addr, uint8_t reg_value)
+{
+    return es8311_write_reg(dev, reg_addr, reg_value);
+}

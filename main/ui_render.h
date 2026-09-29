@@ -7,11 +7,16 @@
 #define UI_FACE_BUF       (UI_FACE_MAX_CHARS * 4 + 1)
 #define UI_SAY_BUF        (UI_SAY_MAX_CHARS * 4 + 1)
 
+#define UI_THEME_DARK  0
+#define UI_THEME_LIGHT 1
+
 typedef struct {
     char face[UI_FACE_BUF];   /* kaomoji shown in the middle of the screen */
     char say[UI_SAY_BUF];     /* speech bubble text; "" hides the bubble */
     char corner[48];          /* small status text in the top-right corner (IP or state) */
+    int theme;                /* UI_THEME_DARK / UI_THEME_LIGHT */
 } ui_state_t;
 
-/* Draw the whole screen into the gfx framebuffer (gfx_init must have been called). */
+/* Draw the whole screen into the gfx framebuffer (gfx_init must have been called).
+ * Layout adapts to the framebuffer size: 320x480 portrait or 480x320 landscape. */
 void ui_render(const ui_state_t *s);

@@ -1,15 +1,15 @@
 /* ke-body: a small body for the Waveshare ESP32-S3-Touch-LCD-3.5-C.
  *
  *  phase 1 (face)
- *  - boot: light background, big kaomoji "(—_—)"
- *  - Wi-Fi credentials from NVS (serial: wifi <ssid> <password>), IP in the corner
- *  - HTTP: GET /ping, POST /face, POST /say
+ *  - boot: big kaomoji "(—_—)", IP in the corner, HTTP /ping /face /say
  *  - short tap anywhere: "(—//—)" for 2 s
  *  phase 2 (ears and mouth)
  *  - hold >= 0.5 s: record from the mic (16 kHz mono) until release (max 30 s),
- *    face "(—o—)", corner "在听"; then POST the WAV to the server URL from NVS
- *    (serial: server http://host:8770/hear)
- *  - POST /play (WAV) plays on the speaker with face "(—▽—)"; POST /volume 0-100
+ *    then POST the WAV to the server URL from NVS (serial: server http://host:8770/hear)
+ *  - POST /play (WAV) plays on the speaker; POST /volume 0-100
+ *  phase 3
+ *  - AXP2101 power rails set up as in the official examples (speaker amp supply)
+ *  - rotation 0/90/180/270 (default 90), brightness, night dimming (NTP), dark/light theme
  */
 #include <string.h>
 #include <stdio.h>
@@ -20,7 +20,9 @@
 #include "esp_log.h"
 
 #include "board.h"
+#include "pmic.h"
 #include "ui.h"
+#include "light.h"
 #include "wifi_mgr.h"
 #include "http_api.h"
 #include "console_cmd.h"
@@ -50,6 +52,7 @@ static void on_wifi_state(wifi_mgr_state_t st, const char *ip)
         ui_set_corner(ip);
         if (s_showing_waiting) { ui_set_say(""); s_showing_waiting = false; }
         http_api_start();
+        light_start_sntp();
         break;
     case WIFI_MGR_DISCONNECTED:
         ui_set_corner("已断开, 重连中");
@@ -143,8 +146,14 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     ESP_ERROR_CHECK(board_init());
-    ui_start();                 /* first frame: default face */
-    board_backlight_set(80);
+
+    /* power rails first (official examples do this before the codec) */
+    if (pmic_init(board_i2c_bus()) != ESP_OK) {
+        ESP_LOGE(TAG, "AXP2101 init failed; continuing without PMIC setup");
+    }
+
+    ui_start();                 /* rotation/theme from NVS, first frame */
+    light_init();               /* brightness from NVS, night schedule */
 
     if (audio_init(board_i2c_bus(), on_audio) != ESP_OK) {
         ESP_LOGE(TAG, "audio init failed; recording/playback disabled");

@@ -22,6 +22,9 @@
 #include "esp_heap_caps.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include <math.h>
+#include <stdio.h>
 #include "es8311.h"
 
 static const char *TAG = "audio";
@@ -172,9 +175,36 @@ static esp_err_t codec_init(i2c_master_bus_handle_t bus)
         .sample_frequency = AUDIO_REC_RATE,
     };
     ESP_RETURN_ON_ERROR(es8311_init(s_codec, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16), TAG, "es8311 init");
+
+    /* Extra registers that the esp_codec_dev ES8311 driver (used by the official
+     * Waveshare ESP-IDF examples, esp-adf components/esp_codec_dev/device/es8311/es8311.c:
+     * es8311_open + es8311_start) writes and the small esp-bsp driver above does not.
+     * Values copied verbatim so the codec ends up in the same state as under the
+     * official example. */
+    static const uint8_t extra[][2] = {
+        { 0x0B, 0x00 }, { 0x0C, 0x00 },   /* system */
+        { 0x10, 0x1F }, { 0x11, 0x7F },   /* system: analog bias / VMID */
+        { 0x1B, 0x0A },                   /* ADC HPF */
+        { 0x44, 0x58 },                   /* internal reference signal (ADCL + DACR), esp_codec_dev default */
+        { 0x17, 0xBF },                   /* ADC digital volume 0 dB (esp-bsp writes 0xC8) */
+        { 0x15, 0x40 },                   /* ADC ramp rate */
+        { 0x45, 0x00 },                   /* GP control */
+    };
+    for (unsigned i = 0; i < sizeof(extra) / sizeof(extra[0]); i++) {
+        ESP_RETURN_ON_ERROR(es8311_write_register(s_codec, extra[i][0], extra[i][1]), TAG, "es8311 extra reg");
+    }
     ESP_RETURN_ON_ERROR(es8311_voice_volume_set(s_codec, s_volume, NULL), TAG, "volume");
     ESP_RETURN_ON_ERROR(es8311_microphone_config(s_codec, false), TAG, "mic");
     ESP_RETURN_ON_ERROR(es8311_microphone_gain_set(s_codec, MIC_GAIN), TAG, "mic gain");
+    uint8_t id1 = 0, id2 = 0, ver = 0;
+    es8311_read_register(s_codec, 0xFD, &id1);
+    es8311_read_register(s_codec, 0xFE, &id2);
+    es8311_read_register(s_codec, 0xFF, &ver);
+    if (id1 == 0x83 && id2 == 0x11) {
+        ESP_LOGI(TAG, "ES8311 found: id 0x%02x%02x version 0x%02x", id1, id2, ver);
+    } else {
+        ESP_LOGW(TAG, "ES8311 chip id mismatch: read 0x%02x 0x%02x (expected 0x83 0x11)", id1, id2);
+    }
     return ESP_OK;
 }
 
@@ -226,6 +256,8 @@ static void do_play(uint8_t *wav, size_t len)
     const int16_t *src = (const int16_t *)w.pcm;
     size_t frames_total = w.pcm_len / (2 * w.channels);
     size_t pos = 0;
+    size_t bytes_out = 0;
+    int64_t t0 = esp_timer_get_time();
     while (pos < frames_total) {
         /* a newer command (record / another play) preempts this playback */
         if (uxQueueMessagesWaiting(s_q) > 0) break;
@@ -242,10 +274,18 @@ static void do_play(uint8_t *wav, size_t len)
             }
         }
         size_t written = 0;
-        if (i2s_channel_write(s_tx, s_chunk, frames * 4, &written, pdMS_TO_TICKS(1000)) != ESP_OK) break;
+        esp_err_t werr = i2s_channel_write(s_tx, s_chunk, frames * 4, &written, pdMS_TO_TICKS(1000));
+        bytes_out += written;
+        if (werr != ESP_OK) {
+            ESP_LOGE(TAG, "i2s write failed: %s", esp_err_to_name(werr));
+            break;
+        }
         pos += frames;
     }
     vTaskDelay(pdMS_TO_TICKS(80));   /* let the DMA drain before reporting done */
+    ESP_LOGI(TAG, "play done: %u/%u frames, %u bytes on I2S in %d ms (volume %d)",
+             (unsigned)pos, (unsigned)frames_total, (unsigned)bytes_out,
+             (int)((esp_timer_get_time() - t0) / 1000), s_volume);
     if (s_cb) s_cb(AUDIO_EVT_PLAY_DONE, NULL, 0);
 }
 
@@ -321,3 +361,59 @@ esp_err_t audio_set_volume(int percent)
 }
 
 int audio_get_volume(void) { return s_volume; }
+
+/* ---- diagnostics (serial console) ------------------------------------------- */
+
+esp_err_t audio_test_tone(int ms)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    if (ms < 100) ms = 100;
+    if (ms > 10000) ms = 10000;
+    const int rate = AUDIO_REC_RATE;
+    size_t n = (size_t)rate * ms / 1000;
+    size_t len = WAV_HDR + n * 2;
+    uint8_t *wav = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+    if (!wav) wav = malloc(len);
+    if (!wav) return ESP_ERR_NO_MEM;
+    wav_write_header(wav, rate, 1, (uint32_t)(n * 2));
+    int16_t *pcm = (int16_t *)(wav + WAV_HDR);
+    for (size_t i = 0; i < n; i++) {
+        /* 1 kHz sine, amplitude 8000, 20 ms fade in/out to avoid clicks */
+        float env = 1.0f;
+        size_t fade = rate / 50;
+        if (i < fade) env = (float)i / fade;
+        else if (n - i < fade) env = (float)(n - i) / fade;
+        pcm[i] = (int16_t)(8000.0f * env * sinf(2.0f * 3.14159265f * 1000.0f * i / rate));
+    }
+    ESP_LOGI(TAG, "test tone: 1 kHz, %d ms, %u bytes", ms, (unsigned)len);
+    esp_err_t err = audio_play_wav(wav, len);
+    if (err != ESP_OK) free(wav);
+    return err;
+}
+
+void audio_dump_regs(void)
+{
+    if (!s_ready) { printf("audio: not ready\n"); return; }
+    printf("ES8311 registers (rate %d Hz, volume %d):\n", s_rate, s_volume);
+    for (int reg = 0; reg <= 0x45; reg++) {
+        uint8_t v = 0;
+        esp_err_t err = es8311_read_register(s_codec, (uint8_t)reg, &v);
+        if (reg % 8 == 0) printf("  %02x:", reg);
+        if (err == ESP_OK) printf(" %02x", v); else printf(" ??");
+        if (reg % 8 == 7) printf("\n");
+    }
+    printf("\n");
+    uint8_t a = 0, b = 0, cver = 0;
+    es8311_read_register(s_codec, 0xFD, &a);
+    es8311_read_register(s_codec, 0xFE, &b);
+    es8311_read_register(s_codec, 0xFF, &cver);
+    printf("  chip id %02x %02x (expect 83 11), version %02x\n", a, b, cver);
+    printf("  meaning: 0D/0E analog power, 12 DAC power (00=on), 13 HP drive (10=on), 14 mic, 31 mute, 32 DAC volume\n");
+}
+
+esp_err_t audio_set_mic_gain(int step)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    if (step < 0 || step > 7) return ESP_ERR_INVALID_ARG;
+    return es8311_microphone_gain_set(s_codec, (es8311_mic_gain_t)step);
+}

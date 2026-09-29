@@ -223,6 +223,16 @@ esp_err_t es8311_microphone_fade(es8311_handle_t dev, const es8311_fade_t fade);
 es8311_handle_t es8311_create(i2c_master_bus_handle_t bus, const uint16_t dev_addr);
 
 /**
+ * @brief Read one register (diagnostics)
+ */
+esp_err_t es8311_read_register(es8311_handle_t dev, uint8_t reg_addr, uint8_t *reg_value);
+
+/**
+ * @brief Write one register (raw)
+ */
+esp_err_t es8311_write_register(es8311_handle_t dev, uint8_t reg_addr, uint8_t reg_value);
+
+/**
  * @brief Delete ES8311 object
  *
  * @param dev ES8311 handle

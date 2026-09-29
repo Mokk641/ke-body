@@ -2,8 +2,11 @@
 #include "ui_render.h"
 #include "gfx.h"
 #include "board.h"
+#include "settings.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <assert.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,8 +19,13 @@ static const char *TAG = "ui";
 
 #define BLUSH_FACE "(—//—)"
 #define BLUSH_MS   2000
+#define KEY_ROTATE "rotate"
+#define KEY_THEME  "theme"
+#define DEFAULT_ROTATION 90
+#define DEFAULT_THEME    UI_THEME_DARK
 
-static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_lock;      /* protects the state below */
+static SemaphoreHandle_t s_fb_lock;   /* protects framebuffer + gfx dimensions */
 static SemaphoreHandle_t s_dirty;
 static ui_state_t s_state;                 /* what is drawn */
 static char s_base_face[UI_FACE_BUF];      /* set by /face */
@@ -26,6 +34,7 @@ static char s_base_corner[48];
 static char s_override_corner[48];
 static esp_timer_handle_t s_blush_timer;
 static uint16_t *s_fb;
+static int s_rotation = DEFAULT_ROTATION;
 
 /* copy at most max_chars code points of valid UTF-8 into dst */
 static void copy_limited(char *dst, size_t dst_size, const char *src, int max_chars)
@@ -68,8 +77,10 @@ static void render_task(void *arg)
         xSemaphoreTake(s_lock, portMAX_DELAY);
         snap = s_state;
         xSemaphoreGive(s_lock);
+        xSemaphoreTake(s_fb_lock, portMAX_DELAY);
         ui_render(&snap);
         board_lcd_flush(s_fb);
+        xSemaphoreGive(s_fb_lock);
     }
 }
 
@@ -84,9 +95,22 @@ static void blush_timeout(void *arg)
     mark_dirty();
 }
 
+static esp_err_t apply_rotation(int rotation)
+{
+    xSemaphoreTake(s_fb_lock, portMAX_DELAY);
+    esp_err_t err = board_lcd_set_rotation(rotation);
+    if (err == ESP_OK) {
+        s_rotation = rotation;
+        gfx_init(s_fb, board_lcd_width(), board_lcd_height());
+    }
+    xSemaphoreGive(s_fb_lock);
+    return err;
+}
+
 void ui_start(void)
 {
     s_lock = xSemaphoreCreateMutex();
+    s_fb_lock = xSemaphoreCreateMutex();
     s_dirty = xSemaphoreCreateBinary();
     s_fb = heap_caps_malloc(BOARD_LCD_W * BOARD_LCD_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     if (!s_fb) {
@@ -94,7 +118,21 @@ void ui_start(void)
         s_fb = heap_caps_malloc(BOARD_LCD_W * BOARD_LCD_H * sizeof(uint16_t), MALLOC_CAP_DEFAULT);
     }
     assert(s_fb);
-    gfx_init(s_fb, BOARD_LCD_W, BOARD_LCD_H);
+
+    /* rotation + theme from NVS */
+    char buf[16];
+    int rot = DEFAULT_ROTATION;
+    if (settings_get_str(KEY_ROTATE, buf, sizeof buf)) {
+        int v = atoi(buf);
+        if (v == 0 || v == 90 || v == 180 || v == 270) rot = v;
+    }
+    s_state.theme = DEFAULT_THEME;
+    if (settings_get_str(KEY_THEME, buf, sizeof buf)) {
+        if (strcmp(buf, "light") == 0) s_state.theme = UI_THEME_LIGHT;
+        else if (strcmp(buf, "dark") == 0) s_state.theme = UI_THEME_DARK;
+    }
+    if (apply_rotation(rot) != ESP_OK) apply_rotation(0);
+    ESP_LOGI(TAG, "rotation %d, theme %s", s_rotation, ui_get_theme());
 
     strcpy(s_base_face, "(—_—)");
     recompute();
@@ -168,4 +206,37 @@ void ui_blush(void)
     esp_timer_stop(s_blush_timer);
     esp_timer_start_once(s_blush_timer, (uint64_t)BLUSH_MS * 1000);
     mark_dirty();
+}
+
+esp_err_t ui_set_rotation(int rotation)
+{
+    if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = apply_rotation(rotation);
+    if (err != ESP_OK) return err;
+    char buf[8];
+    snprintf(buf, sizeof buf, "%d", rotation);
+    settings_set_str(KEY_ROTATE, buf);
+    mark_dirty();
+    return ESP_OK;
+}
+
+int ui_get_rotation(void) { return s_rotation; }
+
+esp_err_t ui_set_theme(const char *name)
+{
+    int t;
+    if (strcmp(name, "dark") == 0) t = UI_THEME_DARK;
+    else if (strcmp(name, "light") == 0) t = UI_THEME_LIGHT;
+    else return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_state.theme = t;
+    xSemaphoreGive(s_lock);
+    settings_set_str(KEY_THEME, name);
+    mark_dirty();
+    return ESP_OK;
+}
+
+const char *ui_get_theme(void)
+{
+    return s_state.theme == UI_THEME_LIGHT ? "light" : "dark";
 }

@@ -2,9 +2,11 @@ idf_component_register(
     SRCS
         "main.c"
         "board.c"
+        "pmic.cpp"
         "ui.c"
         "ui_render.c"
         "gfx.c"
+        "light.c"
         "wifi_mgr.c"
         "http_api.c"
         "console_cmd.c"
@@ -21,6 +23,7 @@ idf_component_register(
         esp_lcd
         esp_lcd_st7796
         es8311
+        XPowersLib
         driver
         esp_driver_i2s
         nvs_flash
