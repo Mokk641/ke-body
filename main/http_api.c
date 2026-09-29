@@ -3,6 +3,7 @@
 #include "ui_render.h"
 #include "audio.h"
 #include "light.h"
+#include "cam_ui.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -112,6 +113,36 @@ static esp_err_t chime_post(httpd_req_t *req)
     return ok(req);
 }
 
+static esp_err_t peek_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    if (strcmp(body, "on") && strcmp(body, "off")) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "peek must be on or off");
+    camui_set_peek(strcmp(body, "on") == 0);
+    return ok(req);
+}
+
+/* remote snapshot: only when "让克看看" is on */
+static esp_err_t snap_handler(httpd_req_t *req)
+{
+    if (!camui_peek()) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        return httpd_resp_sendstr(req, "peek is off (POST /peek on, or console: peek on)");
+    }
+    uint8_t *jpeg = NULL;
+    size_t len = 0;
+    esp_err_t err = camui_remote_snap(&jpeg, &len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "snap failed: %s", esp_err_to_name(err));
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "camera failed");
+    }
+    httpd_resp_set_type(req, "image/jpeg");
+    err = httpd_resp_send(req, (const char *)jpeg, len);
+    free(jpeg);
+    return err;
+}
+
 static esp_err_t anim_post(httpd_req_t *req)
 {
     char body[16];
@@ -218,6 +249,7 @@ esp_err_t http_api_start(void)
     cfg.server_port = 80;
     cfg.lru_purge_enable = true;
     cfg.max_uri_handlers = 24;
+    cfg.stack_size = 8192;
     cfg.recv_wait_timeout = 10;
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) {
@@ -238,6 +270,9 @@ esp_err_t http_api_start(void)
         { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
         { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },
         { .uri = "/chime",  .method = HTTP_POST, .handler = chime_post },
+        { .uri = "/peek",   .method = HTTP_POST, .handler = peek_post },
+        { .uri = "/snap",   .method = HTTP_GET,  .handler = snap_handler },
+        { .uri = "/snap",   .method = HTTP_POST, .handler = snap_handler },
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(s_server, &routes[i]);

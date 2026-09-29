@@ -15,6 +15,9 @@ idf_component_register(
         "uploader.c"
         "bridge.c"
         "imu.c"
+        "camera.c"
+        "storage.c"
+        "cam_ui.c"
         "fonts/font_face64.c"
         "fonts/font_face44.c"
         "fonts/font_face30.c"
@@ -37,4 +40,10 @@ idf_component_register(
         console
         esp_timer
         json
+        esp32-camera
+        fatfs
+        esp_driver_sdmmc
+        sdmmc
+        wear_levelling
+        vfs
 )

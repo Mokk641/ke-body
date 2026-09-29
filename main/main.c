@@ -28,6 +28,7 @@
 #include "bridge.h"
 #include "app_actions.h"
 #include "imu.h"
+#include "cam_ui.h"
 
 static const char *TAG = "main";
 
@@ -156,7 +157,22 @@ void app_on_tap(int hit)
         ui_blush();
         break;
     case UI_HIT_CAM_BTN:
-        ui_toast("相机还没接上", 1500);
+        camui_enter();
+        break;
+    case UI_HIT_CAM_VIEW:
+        camui_shoot();
+        break;
+    case UI_HIT_CAM_GALLERY:
+        camui_gallery_enter();
+        break;
+    case UI_HIT_CAM_BACK:
+        camui_leave();
+        break;
+    case UI_HIT_GAL_DELETE:
+        camui_gallery_delete();
+        break;
+    case UI_HIT_GAL_SEND:
+        camui_gallery_send();
         break;
     default:
         break;
@@ -176,7 +192,7 @@ void app_on_long_release(void)
 
 void app_on_swipe(int dir)
 {
-    (void)dir;
+    camui_gallery_step(dir);
 }
 
 static void on_imu(imu_evt_t evt, int arg)
@@ -241,6 +257,7 @@ void app_main(void)
     ui_start();
     light_init();
     bridge_start();
+    camui_init();
 
     if (audio_init(board_i2c_bus(), on_audio) != ESP_OK) {
         ESP_LOGE(TAG, "audio init failed; recording/playback disabled");

@@ -143,12 +143,12 @@ static void draw_face_band(const palette_t *p, const ui_state_t *s, const layout
     /* floating z's while sleeping (three of them, staggered, rising and fading) */
     if (s->sleeping && s->anim_tick >= 0) {
         int fw = gfx_text_width(f, face);
-        int x0 = cx + fw / 2 + 4;
-        int y0 = base - f->ascent + 6;
+        int x0 = cx + fw / 2 + 6;
+        int y0 = base - 2;                       /* start at the baseline, rise ~30 px inside the band */
         const kb_font_t *zf = &kb_font_text22;
         for (int k = 0; k < 3; k++) {
             int ph = (s->anim_tick * 3 + k * 40) % 120;   /* 0..119, 6 s cycle */
-            int rise = ph * 36 / 120;
+            int rise = ph * 30 / 120;
             int alpha = ph < 20 ? ph * 255 / 20 : (ph > 90 ? (120 - ph) * 255 / 30 : 255);
             uint16_t c = gfx_mix(p->bg, p->face, alpha);
             gfx_draw_text(zf, x0 + k * 12 + (ph % 24 < 12 ? ph % 12 : 12 - ph % 12) / 3, y0 - rise + k * 4,

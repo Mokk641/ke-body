@@ -8,6 +8,8 @@
 #include "board.h"
 #include "bridge.h"
 #include "imu.h"
+#include "cam_ui.h"
+#include "camera.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -222,6 +224,33 @@ static int cmd_autorotate(int argc, char **argv)
     return 0;
 }
 
+static int cmd_cam(int argc, char **argv)
+{
+    if (argc == 2 && strcmp(argv[1], "on") == 0) { camui_enter(); return 0; }
+    if (argc == 2 && strcmp(argv[1], "off") == 0) { camui_leave(); return 0; }
+    if (argc == 2 && strcmp(argv[1], "shot") == 0) { camui_shoot(); return 0; }
+    if (argc == 2 && strcmp(argv[1], "gallery") == 0) { camui_gallery_enter(); return 0; }
+    if (argc == 3 && strcmp(argv[1], "vflip") == 0) { camera_set_vflip(strcmp(argv[2], "on") == 0); printf("vflip %s (saved)\n", argv[2]); return 0; }
+    if (argc == 3 && strcmp(argv[1], "mirror") == 0) { camera_set_hmirror(strcmp(argv[2], "on") == 0); printf("mirror %s (saved)\n", argv[2]); return 0; }
+    printf("usage: cam on|off|shot|gallery | cam vflip on|off | cam mirror on|off\n");
+    return 1;
+}
+
+static int cmd_peek(int argc, char **argv)
+{
+    if (argc == 1) { printf("peek: %s\n", camui_peek() ? "on" : "off"); return 0; }
+    if (strcmp(argv[1], "on") && strcmp(argv[1], "off")) { printf("usage: peek on|off\n"); return 1; }
+    camui_set_peek(strcmp(argv[1], "on") == 0);
+    printf("peek: %s (saved)\n", argv[1]);
+    return 0;
+}
+
+static int cmd_photos(int argc, char **argv)
+{
+    camui_print_photos();
+    return 0;
+}
+
 static int cmd_touchlog(int argc, char **argv)
 {
     if (argc != 2 || (strcmp(argv[1], "on") && strcmp(argv[1], "off"))) {
@@ -346,6 +375,9 @@ esp_err_t console_cmd_start(void)
         { .command = "chime",    .help = "chime on|off  soft tone on new message (saved)", .func = cmd_chime },
         { .command = "imu",      .help = "imu | imu invert on|off   (accelerometer)", .func = cmd_imu },
         { .command = "autorotate", .help = "autorotate on|off (saved, default off)", .func = cmd_autorotate },
+        { .command = "cam",      .help = "cam on|off|shot|gallery | cam vflip on|off | cam mirror on|off", .func = cmd_cam },
+        { .command = "peek",     .help = "peek on|off  allow remote /snap (saved, default off)", .func = cmd_peek },
+        { .command = "photos",   .help = "list photos (SD card or flash)", .func = cmd_photos },
         { .command = "face",     .help = "face <kaomoji>  (local test)", .func = cmd_face },
         { .command = "say",      .help = "say <text>      (local test)", .func = cmd_say },
     };
