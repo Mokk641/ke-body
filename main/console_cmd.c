@@ -7,6 +7,7 @@
 #include "pmic.h"
 #include "board.h"
 #include "bridge.h"
+#include "imu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -188,6 +189,39 @@ static int cmd_anim(int argc, char **argv)
     return 0;
 }
 
+bool app_chime_enabled(void);
+void app_set_chime(bool on);
+
+static int cmd_chime(int argc, char **argv)
+{
+    if (argc == 1) { printf("chime: %s\n", app_chime_enabled() ? "on" : "off"); return 0; }
+    if (strcmp(argv[1], "on") && strcmp(argv[1], "off")) { printf("usage: chime on|off\n"); return 1; }
+    app_set_chime(strcmp(argv[1], "on") == 0);
+    printf("chime: %s (saved)\n", argv[1]);
+    return 0;
+}
+
+static int cmd_imu(int argc, char **argv)
+{
+    if (argc == 1) { imu_print(); return 0; }
+    if (argc == 3 && strcmp(argv[1], "invert") == 0) {
+        imu_set_invert(strcmp(argv[2], "on") == 0);
+        printf("imu invert: %s (saved)\n", imu_get_invert() ? "on" : "off");
+        return 0;
+    }
+    printf("usage: imu | imu invert on|off\n");
+    return 1;
+}
+
+static int cmd_autorotate(int argc, char **argv)
+{
+    if (argc == 1) { printf("autorotate: %s\n", imu_get_autorotate() ? "on" : "off"); return 0; }
+    if (strcmp(argv[1], "on") && strcmp(argv[1], "off")) { printf("usage: autorotate on|off\n"); return 1; }
+    imu_set_autorotate(strcmp(argv[1], "on") == 0);
+    printf("autorotate: %s (saved)\n", argv[1]);
+    return 0;
+}
+
 static int cmd_touchlog(int argc, char **argv)
 {
     if (argc != 2 || (strcmp(argv[1], "on") && strcmp(argv[1], "off"))) {
@@ -309,6 +343,9 @@ esp_err_t console_cmd_start(void)
         { .command = "msg",      .help = "msg <text>   send like a quick button (chat + bridge /msg)", .func = cmd_msg },
         { .command = "buttons",  .help = "show the quick-button config JSON", .func = cmd_buttons },
         { .command = "anim",     .help = "anim on|off (saved)", .func = cmd_anim },
+        { .command = "chime",    .help = "chime on|off  soft tone on new message (saved)", .func = cmd_chime },
+        { .command = "imu",      .help = "imu | imu invert on|off   (accelerometer)", .func = cmd_imu },
+        { .command = "autorotate", .help = "autorotate on|off (saved, default off)", .func = cmd_autorotate },
         { .command = "face",     .help = "face <kaomoji>  (local test)", .func = cmd_face },
         { .command = "say",      .help = "say <text>      (local test)", .func = cmd_say },
     };

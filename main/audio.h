@@ -43,3 +43,6 @@ esp_err_t audio_set_slot_mode(bool mono);    /* I2S slot mode: stereo (default, 
 bool audio_slot_mono(void);
 void audio_dump_regs(void);             /* print ES8311 registers */
 esp_err_t audio_set_mic_gain(int step); /* 0..7 = 0..42 dB in 6 dB steps */
+
+/* Soft two-note chime (silent alert option). */
+esp_err_t audio_play_chime(void);

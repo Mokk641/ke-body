@@ -28,6 +28,7 @@ const char *ui_shake_text(void);
 
 /* display settings (saved to NVS) */
 esp_err_t ui_set_rotation(int rotation);
+void ui_refresh_after_rotation(void);   /* after board_lcd_set_rotation() by auto-rotate */
 int ui_get_rotation(void);
 esp_err_t ui_set_theme(const char *name);
 const char *ui_get_theme(void);

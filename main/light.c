@@ -24,6 +24,7 @@ static bool s_night_on;
 static int s_start_min, s_end_min, s_night_level;
 static bool s_night_active;
 static bool s_sntp_started;
+static int s_override = -1;
 static esp_timer_handle_t s_timer;
 
 static bool parse_night(const char *spec, int *start, int *end, int *level)
@@ -64,6 +65,7 @@ static void apply(void)
         night = in_window(t.tm_hour * 60 + t.tm_min);
     }
     int level = night ? (s_night_level < s_bright ? s_night_level : s_bright) : s_bright;
+    if (s_override >= 0 && s_override < level) level = s_override;
     if (night != s_night_active) {
         ESP_LOGI(TAG, "night dimming %s -> backlight %d", night ? "on" : "off", level);
     }
@@ -155,4 +157,10 @@ void light_print_status(void)
     printf("time: %s (%s)\n", ts, light_time_valid() ? "synced, CST-8" : "NOT synced");
     printf("bright: %d\nnight: %s%s\n", s_bright, s_night,
            s_night_on ? (s_night_active ? "  [active now]" : "  [not active now]") : "");
+}
+
+void light_set_override(int level)
+{
+    s_override = level;
+    apply();
 }

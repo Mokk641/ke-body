@@ -14,6 +14,7 @@ idf_component_register(
         "settings.c"
         "uploader.c"
         "bridge.c"
+        "imu.c"
         "fonts/font_face64.c"
         "fonts/font_face44.c"
         "fonts/font_face30.c"

@@ -100,6 +100,18 @@ static esp_err_t buttons_get(httpd_req_t *req)
     return httpd_resp_sendstr(req, ui_get_buttons_json());
 }
 
+bool app_chime_enabled(void);
+void app_set_chime(bool on);
+
+static esp_err_t chime_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    if (strcmp(body, "on") && strcmp(body, "off")) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "chime must be on or off");
+    app_set_chime(strcmp(body, "on") == 0);
+    return ok(req);
+}
+
 static esp_err_t anim_post(httpd_req_t *req)
 {
     char body[16];
@@ -225,6 +237,7 @@ esp_err_t http_api_start(void)
         { .uri = "/buttons", .method = HTTP_POST, .handler = buttons_post },
         { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
         { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },
+        { .uri = "/chime",  .method = HTTP_POST, .handler = chime_post },
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(s_server, &routes[i]);

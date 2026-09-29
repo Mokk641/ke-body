@@ -27,12 +27,23 @@
 #include "uploader.h"
 #include "bridge.h"
 #include "app_actions.h"
+#include "imu.h"
 
 static const char *TAG = "main";
 
 #define WAITING_TEXT   "等待配网\n串口输入: wifi <ssid> <password>"
 
 static bool s_showing_waiting;
+static bool s_chime;
+
+bool app_chime_enabled(void) { return s_chime; }
+void app_set_chime(bool on) { s_chime = on; settings_set_str("chime", on ? "on" : "off"); }
+
+void app_on_new_message(void)
+{
+    if (s_chime) audio_play_chime();
+}
+
 
 /* ---- Wi-Fi state -> screen ---------------------------------------------------- */
 
@@ -168,8 +179,38 @@ void app_on_swipe(int dir)
     (void)dir;
 }
 
+static void on_imu(imu_evt_t evt, int arg)
+{
+    switch (evt) {
+    case IMU_EVT_SHAKE:
+        ui_shake();
+        if (!ui_is_sleeping()) app_send_text(ui_shake_text());
+        break;
+    case IMU_EVT_FACE_DOWN:
+        ui_set_sleeping(true);
+        light_set_override(LIGHT_MIN_BRIGHT);
+        break;
+    case IMU_EVT_FACE_UP:
+        ui_set_sleeping(false);
+        light_set_override(-1);
+        break;
+    case IMU_EVT_ORIENTATION:
+        if (arg != ui_get_rotation()) {
+            /* auto-rotate does not touch the saved "rotate" setting */
+            ESP_LOGI(TAG, "auto-rotate -> %d", arg);
+            board_lcd_set_rotation(arg);
+            ui_refresh_after_rotation();
+        }
+        break;
+    }
+}
+
 void app_on_touch_activity(void)
 {
+    if (ui_is_sleeping()) {
+        ui_set_sleeping(false);
+        light_set_override(-1);
+    }
 }
 
 static void touch_task(void *arg)
@@ -204,6 +245,10 @@ void app_main(void)
     if (audio_init(board_i2c_bus(), on_audio) != ESP_OK) {
         ESP_LOGE(TAG, "audio init failed; recording/playback disabled");
     }
+
+    char buf[8];
+    if (settings_get_str("chime", buf, sizeof buf)) s_chime = strcmp(buf, "on") == 0;
+    imu_init(board_i2c_bus(), on_imu);   /* optional: logs and continues if not found */
 
     xTaskCreate(touch_task, "touch", 4096, NULL, 4, NULL);
 

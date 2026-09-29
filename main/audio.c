@@ -546,3 +546,29 @@ esp_err_t audio_set_mic_gain(int step)
     if (step < 0 || step > 7) return ESP_ERR_INVALID_ARG;
     return es8311_microphone_gain_set(s_codec, (es8311_mic_gain_t)step);
 }
+
+esp_err_t audio_play_chime(void)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    const int rate = AUDIO_REC_RATE;
+    const int ms = 260;
+    size_t n = (size_t)rate * ms / 1000;
+    size_t len = WAV_HDR + n * 2;
+    uint8_t *wav = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+    if (!wav) wav = malloc(len);
+    if (!wav) return ESP_ERR_NO_MEM;
+    wav_write_header(wav, rate, 1, (uint32_t)(n * 2));
+    int16_t *pcm = (int16_t *)(wav + WAV_HDR);
+    size_t n1 = n * 2 / 5;   /* first note 880 Hz, second 1175 Hz, both with a soft envelope */
+    for (size_t i = 0; i < n; i++) {
+        float f = i < n1 ? 880.0f : 1174.7f;
+        size_t j = i < n1 ? i : i - n1;
+        size_t seg = i < n1 ? n1 : n - n1;
+        float env = (float)(seg - j) / seg;
+        env *= j < 80 ? j / 80.0f : 1.0f;
+        pcm[i] = (int16_t)(2500.0f * env * sinf(2.0f * 3.14159265f * f * i / rate));
+    }
+    esp_err_t err = audio_play_wav(wav, len);
+    if (err != ESP_OK) free(wav);
+    return err;
+}

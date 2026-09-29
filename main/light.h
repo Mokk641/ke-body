@@ -16,6 +16,9 @@ esp_err_t light_set_night(const char *spec);
 const char *light_get_night(void);
 bool light_night_active(void);               /* currently dimmed by the night schedule */
 
+/* Temporary override (sleep): level 5..100, or -1 to clear. Not saved. */
+void light_set_override(int level);
+
 void light_start_sntp(void);                 /* call once when Wi-Fi is up */
 bool light_time_valid(void);
 void light_print_status(void);

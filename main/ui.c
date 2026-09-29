@@ -373,11 +373,14 @@ void ui_chat_add(chat_who_t who, const char *utf8)
     mark_dirty();
 }
 
+void app_on_new_message(void);
+
 void ui_set_say(const char *utf8)
 {
     if (!utf8 || !utf8[0]) return;
     ui_chat_add(CHAT_KE, utf8);
     ui_flash_border();
+    app_on_new_message();
 }
 
 void ui_toast(const char *utf8, int ms)
@@ -413,6 +416,14 @@ esp_err_t ui_set_rotation(int rotation)
 }
 
 int ui_get_rotation(void) { return s_rotation; }
+
+void ui_refresh_after_rotation(void)
+{
+    xSemaphoreTake(s_fb_lock, portMAX_DELAY);
+    gfx_init(s_fb, board_lcd_width(), board_lcd_height());
+    xSemaphoreGive(s_fb_lock);
+    mark_dirty();
+}
 
 esp_err_t ui_set_theme(const char *name)
 {

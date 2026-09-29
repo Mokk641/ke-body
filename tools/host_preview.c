@@ -36,7 +36,9 @@ int main(int argc, char **argv)
     s->theme = (argc > 5 && strcmp(argv[5], "light") == 0) ? UI_THEME_LIGHT : UI_THEME_DARK;
     if (argc > 6 && strcmp(argv[6], "camera") == 0) s->screen = UI_SCREEN_CAMERA;
     if (argc > 6 && strcmp(argv[6], "gallery") == 0) { s->screen = UI_SCREEN_GALLERY; s->gal_count = 3; s->gal_index = 1; snprintf(s->cam_text, sizeof s->cam_text, "20260929-121500.jpg"); }
-    if (argc > 7) snprintf(s->toast, sizeof s->toast, "%s", argv[7]);
+    if (argc > 7 && strcmp(argv[7], "sleep") == 0) { s->sleeping = true; s->anim_tick = 37; }
+    else if (argc > 7 && strcmp(argv[7], "blink") == 0) s->blink = true;
+    else if (argc > 7) snprintf(s->toast, sizeof s->toast, "%s", argv[7]);
 
     const char *tb[] = { "想你了", "抱抱", "在干嘛", "晚安" };
     const char *eb[] = { "(´ω`)", "(≧▽≦)", "♡", "💧" };
