@@ -43,7 +43,7 @@ static const char *TAG = "audio";
 #define WAV_HDR          44
 #define REC_MAX_SAMPLES  (AUDIO_REC_RATE * AUDIO_REC_MAX_SECONDS)
 
-typedef enum { CMD_REC, CMD_PLAY } cmd_type_t;
+typedef enum { CMD_REC, CMD_PLAY, CMD_MICTEST } cmd_type_t;
 typedef struct { cmd_type_t type; uint8_t *buf; size_t len; } cmd_t;
 
 static i2s_chan_handle_t s_tx, s_rx;
@@ -56,7 +56,12 @@ static volatile bool s_recording;
 static volatile bool s_stop_rec;
 static uint8_t *s_rec_buf;
 static int16_t *s_chunk;
+static int16_t *s_rxchunk;
 static int s_volume = AUDIO_DEFAULT_VOLUME;
+static bool s_mono;          /* I2S slot mode: false = stereo (official), true = mono/left */
+static bool s_probe;         /* test tone: capture RX while playing and report peaks */
+
+static inline int frame_bytes(void) { return s_mono ? 2 : 4; }
 
 /* ---- WAV helpers ---------------------------------------------------------- */
 
@@ -231,10 +236,14 @@ static void do_record(void)
 
     while (!s_stop_rec && n < REC_MAX_SAMPLES) {
         if (i2s_channel_read(s_rx, s_chunk, CHUNK_BYTES, &got, pdMS_TO_TICKS(200)) != ESP_OK) continue;
-        size_t frames = got / 4;
+        size_t frames = got / frame_bytes();
         for (size_t i = 0; i < frames && n < REC_MAX_SAMPLES; i++) {
-            /* average L and R: works whether the codec drives one or both slots */
-            pcm[n++] = (int16_t)(((int)s_chunk[2 * i] + (int)s_chunk[2 * i + 1]) / 2);
+            if (s_mono) {
+                pcm[n++] = s_chunk[i];
+            } else {
+                /* average L and R: works whether the codec drives one or both slots */
+                pcm[n++] = (int16_t)(((int)s_chunk[2 * i] + (int)s_chunk[2 * i + 1]) / 2);
+            }
         }
     }
     s_recording = false;
@@ -257,6 +266,7 @@ static void do_play(uint8_t *wav, size_t len)
     size_t frames_total = w.pcm_len / (2 * w.channels);
     size_t pos = 0;
     size_t bytes_out = 0;
+    int probe_peak_l = 0, probe_peak_r = 0;
     int64_t t0 = esp_timer_get_time();
     while (pos < frames_total) {
         /* a newer command (record / another play) preempts this playback */
@@ -264,29 +274,90 @@ static void do_play(uint8_t *wav, size_t len)
         size_t frames = frames_total - pos;
         if (frames > FRAMES_PER_CHUNK) frames = FRAMES_PER_CHUNK;
         for (size_t i = 0; i < frames; i++) {
+            int16_t l, r;
             if (w.channels == 1) {
-                int16_t s = src[pos + i];
-                s_chunk[2 * i] = s;
-                s_chunk[2 * i + 1] = s;
+                l = r = src[pos + i];
             } else {
-                s_chunk[2 * i] = src[(pos + i) * w.channels];
-                s_chunk[2 * i + 1] = src[(pos + i) * w.channels + 1];
+                l = src[(pos + i) * w.channels];
+                r = src[(pos + i) * w.channels + 1];
+            }
+            if (s_mono) {
+                s_chunk[i] = (w.channels == 1) ? l : (int16_t)(((int)l + (int)r) / 2);
+            } else {
+                s_chunk[2 * i] = l;
+                s_chunk[2 * i + 1] = r;
             }
         }
         size_t written = 0;
-        esp_err_t werr = i2s_channel_write(s_tx, s_chunk, frames * 4, &written, pdMS_TO_TICKS(1000));
+        esp_err_t werr = i2s_channel_write(s_tx, s_chunk, frames * frame_bytes(), &written, pdMS_TO_TICKS(1000));
         bytes_out += written;
         if (werr != ESP_OK) {
             ESP_LOGE(TAG, "i2s write failed: %s", esp_err_to_name(werr));
             break;
         }
         pos += frames;
+        if (s_probe) {
+            /* REG44=0x58 routes the DAC signal into the ADC right channel, so the
+             * tone should show up here if the I2S data really reaches the codec. */
+            size_t got = 0;
+            if (i2s_channel_read(s_rx, s_rxchunk, CHUNK_BYTES, &got, 0) == ESP_OK && pos > 8 * FRAMES_PER_CHUNK) {
+                size_t fr = got / frame_bytes();
+                for (size_t i = 0; i < fr; i++) {
+                    int l = s_mono ? s_rxchunk[i] : s_rxchunk[2 * i];
+                    int r = s_mono ? s_rxchunk[i] : s_rxchunk[2 * i + 1];
+                    if (l < 0) l = -l;
+                    if (r < 0) r = -r;
+                    if (l > probe_peak_l) probe_peak_l = l;
+                    if (r > probe_peak_r) probe_peak_r = r;
+                }
+            }
+        }
+    }
+    if (s_probe) {
+        ESP_LOGI(TAG, "loopback while playing: ADC peak L=%d R=%d (tone amplitude 8000; "
+                 "R should follow the tone via REG44=0x58, L is the microphone)", probe_peak_l, probe_peak_r);
+        s_probe = false;
     }
     vTaskDelay(pdMS_TO_TICKS(80));   /* let the DMA drain before reporting done */
     ESP_LOGI(TAG, "play done: %u/%u frames, %u bytes on I2S in %d ms (volume %d)",
              (unsigned)pos, (unsigned)frames_total, (unsigned)bytes_out,
              (int)((esp_timer_get_time() - t0) / 1000), s_volume);
     if (s_cb) s_cb(AUDIO_EVT_PLAY_DONE, NULL, 0);
+}
+
+static void do_mictest(int ms)
+{
+    if (set_rate(AUDIO_REC_RATE) != ESP_OK) return;
+    size_t got;
+    for (int i = 0; i < 4; i++) {
+        if (i2s_channel_read(s_rx, s_rxchunk, CHUNK_BYTES, &got, 0) != ESP_OK) break;
+    }
+    int peak_l = 0, peak_r = 0;
+    double sq_l = 0, sq_r = 0;
+    size_t n = 0;
+    int64_t t_end = esp_timer_get_time() + (int64_t)ms * 1000;
+    while (esp_timer_get_time() < t_end) {
+        if (i2s_channel_read(s_rx, s_rxchunk, CHUNK_BYTES, &got, pdMS_TO_TICKS(200)) != ESP_OK) continue;
+        size_t fr = got / frame_bytes();
+        for (size_t i = 0; i < fr; i++) {
+            int l = s_mono ? s_rxchunk[i] : s_rxchunk[2 * i];
+            int r = s_mono ? s_rxchunk[i] : s_rxchunk[2 * i + 1];
+            sq_l += (double)l * l;
+            sq_r += (double)r * r;
+            if (l < 0) l = -l;
+            if (r < 0) r = -r;
+            if (l > peak_l) peak_l = l;
+            if (r > peak_r) peak_r = r;
+            n++;
+        }
+    }
+    if (n == 0) {
+        ESP_LOGE(TAG, "mic test: no I2S RX data at all in %d ms", ms);
+        return;
+    }
+    ESP_LOGI(TAG, "mic test: %u frames in %d ms; L peak=%d rms=%.0f | R peak=%d rms=%.0f "
+             "(silence ~ <100, speech ~ >1000; all zero = no ADC data)",
+             (unsigned)n, ms, peak_l, sqrt(sq_l / n), peak_r, sqrt(sq_r / n));
 }
 
 static void audio_task(void *arg)
@@ -302,6 +373,9 @@ static void audio_task(void *arg)
             do_play(c.buf, c.len);
             free(c.buf);
             break;
+        case CMD_MICTEST:
+            do_mictest((int)c.len);
+            break;
         }
     }
 }
@@ -313,7 +387,8 @@ esp_err_t audio_init(i2c_master_bus_handle_t bus, audio_cb_t cb)
     s_cb = cb;
     s_rec_buf = heap_caps_malloc(WAV_HDR + REC_MAX_SAMPLES * 2, MALLOC_CAP_SPIRAM);
     s_chunk = heap_caps_malloc(CHUNK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    ESP_RETURN_ON_FALSE(s_rec_buf && s_chunk, ESP_ERR_NO_MEM, TAG, "buffers");
+    s_rxchunk = heap_caps_malloc(CHUNK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_RETURN_ON_FALSE(s_rec_buf && s_chunk && s_rxchunk, ESP_ERR_NO_MEM, TAG, "buffers");
     ESP_RETURN_ON_ERROR(i2s_init(), TAG, "i2s");
     ESP_RETURN_ON_ERROR(codec_init(bus), TAG, "codec");
     s_q = xQueueCreate(4, sizeof(cmd_t));
@@ -364,12 +439,14 @@ int audio_get_volume(void) { return s_volume; }
 
 /* ---- diagnostics (serial console) ------------------------------------------- */
 
-esp_err_t audio_test_tone(int ms)
+esp_err_t audio_test_tone(int ms, int rate)
 {
     if (!s_ready) return ESP_ERR_INVALID_STATE;
     if (ms < 100) ms = 100;
     if (ms > 10000) ms = 10000;
-    const int rate = AUDIO_REC_RATE;
+    if (rate <= 0) rate = AUDIO_REC_RATE;
+    if (!rate_supported(rate)) return ESP_ERR_NOT_SUPPORTED;
+    s_probe = true;
     size_t n = (size_t)rate * ms / 1000;
     size_t len = WAV_HDR + n * 2;
     uint8_t *wav = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
@@ -385,11 +462,40 @@ esp_err_t audio_test_tone(int ms)
         else if (n - i < fade) env = (float)(n - i) / fade;
         pcm[i] = (int16_t)(8000.0f * env * sinf(2.0f * 3.14159265f * 1000.0f * i / rate));
     }
-    ESP_LOGI(TAG, "test tone: 1 kHz, %d ms, %u bytes", ms, (unsigned)len);
+    ESP_LOGI(TAG, "test tone: 1 kHz, %d ms at %d Hz, %u bytes, slot mode %s", ms, rate, (unsigned)len,
+             s_mono ? "mono" : "stereo");
     esp_err_t err = audio_play_wav(wav, len);
-    if (err != ESP_OK) free(wav);
+    if (err != ESP_OK) { free(wav); s_probe = false; }
     return err;
 }
+
+esp_err_t audio_mic_test(int ms)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    if (ms < 200) ms = 200;
+    if (ms > 10000) ms = 10000;
+    cmd_t c = { .type = CMD_MICTEST, .buf = NULL, .len = (size_t)ms };
+    return xQueueSend(s_q, &c, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+esp_err_t audio_set_slot_mode(bool mono)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    if (mono == s_mono) return ESP_OK;
+    i2s_channel_disable(s_tx);
+    i2s_channel_disable(s_rx);
+    i2s_std_slot_config_t slot = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                                     mono ? I2S_SLOT_MODE_MONO : I2S_SLOT_MODE_STEREO);
+    esp_err_t err = i2s_channel_reconfig_std_slot(s_tx, &slot);
+    if (err == ESP_OK) err = i2s_channel_reconfig_std_slot(s_rx, &slot);
+    i2s_channel_enable(s_tx);
+    i2s_channel_enable(s_rx);
+    if (err == ESP_OK) s_mono = mono;
+    ESP_LOGI(TAG, "I2S slot mode -> %s (%s)", mono ? "mono/left" : "stereo", esp_err_to_name(err));
+    return err;
+}
+
+bool audio_slot_mono(void) { return s_mono; }
 
 void audio_dump_regs(void)
 {

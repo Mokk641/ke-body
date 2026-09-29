@@ -7,7 +7,8 @@
 |------|------|------|----------|
 | v1 | `release/ke-body-v1.bin` | 第一期：脸、配网、HTTP `/face /say /ping`、触摸脸红 | 已上板验证 |
 | v2 | `release/ke-body-v2.bin` | + 第二期：按住说话录音上传、`/play` 播放、`/volume`、电脑端脚本 | 已上板：启动、Wi-Fi、HTTP、`face/say` 正常；**喇叭无声**；录音未测 |
-| v3 | `release/ke-body-v3.bin` | + 第三期：AXP2101 电源初始化（修喇叭）、横屏、亮度、夜间变暗、黑底白字、串口诊断命令 | **未在真机运行过**，见 §6 |
+| v3 | `release/ke-body-v3.bin` | + 第三期：AXP2101 电源初始化、横屏、亮度、夜间变暗、黑底白字、串口诊断命令 | 已上板：PMIC 应答、电源全开、ES8311 寄存器正确，**喇叭仍无声** |
+| v3.1 | `release/ke-body-v3.1.bin` | + 不用耳朵的音频诊断：`audio test` 内部回环峰值、`audio mic`、`audio slot`、`gpio` 命令 | **未在真机运行过** |
 
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
@@ -57,7 +58,7 @@
 3. 一行烧录（合并好的单文件固件，从地址 0 写入）：
 
 ```
-python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.bin
+python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.1.bin
 ```
 
 （v1 / v2 文件都保留，换文件名即可回退。NVS 里的 Wi-Fi、服务器地址、亮度等设置在各版本之间通用，重新烧录不会丢。）
@@ -93,7 +94,10 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.
 | `touchlog on|off` | 按住屏幕时打印原始坐标和换算后的坐标（每 200ms 一行） |
 | `pmic` / `pmic <rail> on|off` / `pmic init` | AXP2101：打印所有电源轨状态和电压 / 单独开关某一路（`dc1..dc5 aldo1..aldo4 bldo1 bldo2 dldo1 dldo2 cpusldo`）/ 重新跑一遍初始化 |
 | `tca` / `tca <pin> 0|1|in` | TCA9554 扩展 IO：打印 8 个引脚状态 / 把某脚设成输出低、输出高或输入（**pin 1 是屏幕复位，别动**） |
-| `audio test [ms]` | 固件内部生成 1kHz 正弦音（16k 单声道，默认 1 秒）走正常播放通道，不经过 HTTP |
+| `audio test [ms] [rate]` | 固件内部生成 1kHz 正弦音（默认 1 秒、16k）走正常播放通道，同时抓 ADC 回环并打印 L/R 峰值（见 §3.5） |
+| `audio mic [ms]` | 录 ms 毫秒，打印 L/R 峰值和 RMS |
+| `audio slot mono|stereo` | I2S 槽位模式切换（默认 stereo，与官方一致） |
+| `gpio <n> 0|1|in` | 驱动一个空闲 ESP32 引脚，找功放使能用；占用引脚会拒绝 |
 | `audio regs` | 打印 ES8311 全部寄存器和芯片 ID |
 | `audio gain <0-7>` | 麦克风 PGA 增益，0=0dB，每步 6dB，默认 5（30dB） |
 | `face <颜文字>` / `say <文字>` | 本地测试屏幕，不走网络 |
@@ -151,19 +155,22 @@ python pc/ke_send.py theme dark
 4. 发送期间（最长 15 秒超时）板子不处理新的录音和播放；这期间按住再松开会被忽略。
 5. 播放中长按会打断播放并开始录音。
 
-### 3.5 喇叭排查步骤（第三期）
+### 3.5 喇叭排查步骤（第三期 / v3.1）
 
-v2 喇叭无声，v3 做了两处改动 + 一组诊断命令。烧好 v3 后按这个顺序试：
+v2 喇叭无声。v3 上板结果：`pmic` 显示 AXP2101 应答、全部电源轨 ON；`tca` pin0 拉低、pin1 高；`audio regs` 的 ES8311 寄存器和官方驱动写出来的一致（DAC 上电、HP 驱动开、未静音、音量 b2、芯片 ID 83 11）；`audio test` 仍无声。也就是说 I2C 这一侧全对，剩下的只可能是「I2S 数据没到芯片」或「功放没使能 / 没供电」。v3.1 加了不用耳朵就能判断的测试：
 
-1. 看开机串口日志：
-   - `pmic: AXP2101 chip id 0x4a`（AXP2101 的 ID 是 0x4A）后面跟一张各电源轨 ON/off 和电压的表。没有这行 → PMIC 没应答，看 §6。
-   - `audio: ES8311 found: id 0x8311 version xx` → 编解码芯片在 I2C 上应答正常。
-   - `audio: ready (volume 70)`。
-2. 串口 `audio test` → 板子自己发 1 秒 1kHz 正弦音。日志会打印 `play done: N/N frames, M bytes on I2S in ~1000 ms`，说明 I2S 在正常写数据。**这时候有声** → 硬件通了，之前无声是 v2 少了电源初始化；再用 `ke_send.py play` 验证 HTTP 通道。
-3. 还是没声 → `pmic` 看电源轨。然后逐个试：`pmic aldo1 off` / `on`、`dldo1`、`dldo2`、`dc3`…每切一次跑一遍 `audio test`。第三方 xiaozhi 固件（这块板上语音可用）只开了 `aldo1`(3.3V)、`bldo1`(1.5V)、`bldo2`(2.8V)，其余全关。
-4. 还是没声 → `tca` 看扩展 IO 状态；xiaozhi 固件把 **pin 0 设为输出低**（官方例子不动它）。试 `tca 0 0` 和 `tca 0 1` 后各跑一次 `audio test`。
-5. 还是没声 → `audio regs` 把寄存器 dump 发给我；重点看 `12`（DAC 电源，应为 00）、`13`（应为 10）、`31`（静音位，应为 00）、`32`（DAC 音量，70% 对应 b2）。
-6. 有声但很小 → `volume 100` 试上限；默认值可改 `main/audio.h` 的 `AUDIO_DEFAULT_VOLUME`。
+1. `audio test` → 日志里看两行：
+   - `play done: N/N frames, M bytes on I2S in ~1000 ms`：I2S 在按时钟正常写数据。如果 ms 远大于 1000 或 frames 不满，是 I2S 时钟问题。
+   - `loopback while playing: ADC peak L=… R=…`：ES8311 寄存器 0x44=0x58 会把 DAC 信号内部送到 ADC 右声道。**R 有几千**（测试音幅度 8000）→ 数据确实到了芯片、DAC 数字通路在工作，问题在模拟侧（功放/供电/喇叭）；**R 接近 0** → I2S 数据或时钟没到芯片，先查 `audio slot mono` 再试。
+2. `audio mic 2000` → 对着板子说话，日志打印 L/R 的 peak 和 rms。有反应 → ADC、MCLK、BCLK、LRCK、I2C 都通，这时候 DAC 应该也通。
+3. `audio slot mono` 然后再 `audio test`：把 I2S 从立体声槽位切成单声道/左槽（xiaozhi 以外的另一种常见配法）。`audio slot stereo` 切回。
+4. `audio test 1000 24000`：用 xiaozhi 的 24kHz 试一次。
+5. 功放使能脚猜测（官方例子和 xiaozhi 都没有，但板上功放必然有个使能或供电）：
+   - TCA9554 剩余引脚：`tca 6 1`、`tca 7 1`（这两脚现在读到低）、`tca 2 0`…`tca 5 0`，每改一次跑 `audio test`；试完 `tca <n> in` 恢复。
+   - ESP32 空闲引脚：`gpio 4 1`、`gpio 2 1`、`gpio 43 1`、`gpio 44 1`（板上没被占用的只有这几个），每改一次跑 `audio test`。摄像头脚 17 18 21 38-42 45-48 现在也空着，可以顺手试。
+   - AXP2101：`pmic` 已全开；可以反过来试 xiaozhi 的最小集：`pmic dc2 off`、`dc4 off`、`dc5 off`、`aldo2 off`、`aldo3 off`、`aldo4 off`、`dldo1 off`、`dldo2 off`，看是否反而有声（某路电压顶着功放的使能脚的情况）。
+6. `volume 100` 再 `audio test`，排除只是太小。
+7. 还是没声：把 `audio test`、`audio mic` 的日志两行发我。如果 loopback R 正常而喇叭无声，就只剩板子硬件这一侧了，可以找微雪要原理图问功放（NS4150 一类）的使能脚接哪。
 
 ---
 

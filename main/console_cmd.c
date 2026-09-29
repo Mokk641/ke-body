@@ -206,12 +206,41 @@ static int cmd_tca(int argc, char **argv)
     return 1;
 }
 
+static int cmd_gpio(int argc, char **argv)
+{
+    if (argc == 3) {
+        int pin = atoi(argv[1]);
+        int mode = strcmp(argv[2], "in") == 0 ? 2 : strcmp(argv[2], "1") == 0 ? 1 : strcmp(argv[2], "0") == 0 ? 0 : -1;
+        if (mode >= 0) {
+            esp_err_t err = board_gpio_set(pin, mode);
+            if (err != ESP_OK) printf("gpio %d: %s (reserved pin or bad number)\n", pin, esp_err_to_name(err));
+            return err == ESP_OK ? 0 : 1;
+        }
+    }
+    printf("usage: gpio <n> 0|1|in    (free pins on this board: 2 4 43 44; camera pins 17 18 21 38-42 45-48 are idle too)\n");
+    return 1;
+}
+
 static int cmd_audio(int argc, char **argv)
 {
     if (argc >= 2 && strcmp(argv[1], "test") == 0) {
         int ms = argc >= 3 ? atoi(argv[2]) : 1000;
-        esp_err_t err = audio_test_tone(ms);
-        printf("test tone %d ms: %s\n", ms, esp_err_to_name(err));
+        int rate = argc >= 4 ? atoi(argv[3]) : 0;
+        esp_err_t err = audio_test_tone(ms, rate);
+        printf("test tone %d ms: %s  (watch the log for 'play done' and 'loopback' lines)\n", ms, esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (argc >= 2 && strcmp(argv[1], "mic") == 0) {
+        int ms = argc >= 3 ? atoi(argv[2]) : 2000;
+        esp_err_t err = audio_mic_test(ms);
+        printf("mic test %d ms: %s  (speak now; result in the log)\n", ms, esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (argc == 3 && strcmp(argv[1], "slot") == 0) {
+        bool mono = strcmp(argv[2], "mono") == 0;
+        if (!mono && strcmp(argv[2], "stereo") != 0) { printf("usage: audio slot mono|stereo\n"); return 1; }
+        esp_err_t err = audio_set_slot_mode(mono);
+        printf("slot mode %s: %s\n", argv[2], esp_err_to_name(err));
         return err == ESP_OK ? 0 : 1;
     }
     if (argc == 2 && strcmp(argv[1], "regs") == 0) { audio_dump_regs(); return 0; }
@@ -221,7 +250,7 @@ static int cmd_audio(int argc, char **argv)
         printf("mic gain step %d (0=0dB .. 7=42dB, 6 dB/step): %s\n", g, esp_err_to_name(err));
         return err == ESP_OK ? 0 : 1;
     }
-    printf("usage: audio test [ms] | audio regs | audio gain <0-7>\n");
+    printf("usage: audio test [ms] [rate] | audio mic [ms] | audio slot mono|stereo | audio regs | audio gain <0-7>\n");
     return 1;
 }
 
@@ -248,7 +277,8 @@ esp_err_t console_cmd_start(void)
         { .command = "touchlog", .help = "touchlog on|off  print touch coordinates", .func = cmd_touchlog },
         { .command = "pmic",     .help = "pmic | pmic init | pmic <rail> on|off   (AXP2101 rails)", .func = cmd_pmic },
         { .command = "tca",      .help = "tca | tca <pin> 0|1|in   (TCA9554 expander pins)", .func = cmd_tca },
-        { .command = "audio",    .help = "audio test [ms] | audio regs | audio gain <0-7>", .func = cmd_audio },
+        { .command = "audio",    .help = "audio test [ms] [rate] | audio mic [ms] | audio slot mono|stereo | audio regs | audio gain <0-7>", .func = cmd_audio },
+        { .command = "gpio",     .help = "gpio <n> 0|1|in   (drive a free ESP32 pin, amplifier-enable hunting)", .func = cmd_gpio },
         { .command = "face",     .help = "face <kaomoji>  (local test)", .func = cmd_face },
         { .command = "say",      .help = "say <text>      (local test)", .func = cmd_say },
     };

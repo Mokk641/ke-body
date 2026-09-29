@@ -39,3 +39,7 @@ void board_touch_log(bool on);   /* print raw + mapped coordinates while pressed
  * 1 = output high, 2 = input. Pin 1 is the LCD reset (keep it high). */
 esp_err_t board_expander_set(int pin, int mode);
 esp_err_t board_expander_dump(void);
+
+/* ESP32 GPIO control for bench tests. mode: 0 = output low, 1 = output high, 2 = input.
+ * Refuses pins used by the board (LCD, I2C, I2S, USB, flash/PSRAM). */
+esp_err_t board_gpio_set(int gpio, int mode);

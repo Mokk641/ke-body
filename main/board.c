@@ -354,3 +354,27 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
     }
     return true;
 }
+
+/* Drive / read an ESP32 GPIO for bench tests (hunting for an amplifier enable). */
+esp_err_t board_gpio_set(int gpio, int mode)
+{
+    static const int reserved[] = { 0, 1, 3, 5, 6, 7, 8, 12, 13, 14, 15, 16, 19, 20 };
+    if (gpio < 0 || gpio > 48 || mode < 0 || mode > 2) return ESP_ERR_INVALID_ARG;
+    if (gpio >= 26 && gpio <= 37) return ESP_ERR_INVALID_ARG;   /* flash / PSRAM */
+    for (unsigned i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++) {
+        if (reserved[i] == gpio) return ESP_ERR_INVALID_ARG;
+    }
+    gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << gpio,
+        .mode = mode == 2 ? GPIO_MODE_INPUT : GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&cfg), TAG, "gpio config");
+    if (mode != 2) gpio_set_level(gpio, mode);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    printf("gpio %d: %s, level now %d\n", gpio, mode == 2 ? "input" : mode ? "output high" : "output low",
+           gpio_get_level(gpio));
+    return ESP_OK;
+}

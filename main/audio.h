@@ -36,6 +36,10 @@ esp_err_t audio_set_volume(int percent);   /* 0..100 */
 int audio_get_volume(void);
 
 /* Diagnostics for the serial console. */
-esp_err_t audio_test_tone(int ms);      /* play a 1 kHz sine through the normal playback path */
+esp_err_t audio_test_tone(int ms, int rate);  /* 1 kHz sine through the normal playback path; rate 0 = 16000.
+                                               * Also captures the ADC during playback and logs L/R peaks. */
+esp_err_t audio_mic_test(int ms);            /* record for ms, log L/R peak and RMS */
+esp_err_t audio_set_slot_mode(bool mono);    /* I2S slot mode: stereo (default, official) or mono/left */
+bool audio_slot_mono(void);
 void audio_dump_regs(void);             /* print ES8311 registers */
 esp_err_t audio_set_mic_gain(int step); /* 0..7 = 0..42 dB in 6 dB steps */
