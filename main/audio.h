@@ -8,7 +8,7 @@
 
 #define AUDIO_REC_RATE        16000
 #define AUDIO_REC_MAX_SECONDS 30
-#define AUDIO_DEFAULT_VOLUME  10
+#define AUDIO_DEFAULT_VOLUME  18
 
 typedef enum {
     AUDIO_EVT_REC_START,   /* recording began */

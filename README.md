@@ -9,7 +9,8 @@
 | v2 | `release/ke-body-v2.bin` | + 第二期：按住说话录音上传、`/play` 播放、`/volume`、电脑端脚本 | 已上板：启动、Wi-Fi、HTTP、`face/say` 正常；**喇叭无声**；录音未测 |
 | v3 | `release/ke-body-v3.bin` | + 第三期：AXP2101 电源初始化、横屏、亮度、夜间变暗、黑底白字、串口诊断命令 | 已上板：PMIC 应答、电源全开、ES8311 寄存器正确，**喇叭仍无声** |
 | v3.1 | `release/ke-body-v3.1.bin` | + 不用耳朵的音频诊断：`audio test` 内部回环峰值、`audio mic`、`audio slot`、`gpio` 命令 | 已上板：回环 R=8000 证明 I2S/DAC 通；**找到功放使能 = TCA9554 P7** |
-| v3.2 | `release/ke-body-v3.2.bin` | + 开机接管 TCA9554 P7（播放时开功放、空闲关）；音量改为分贝映射，默认 10 | **未在真机运行过** |
+| v3.2 | `release/ke-body-v3.2.bin` | + 开机接管 TCA9554 P7（播放时开功放、空闲关）；音量改为分贝映射 | 已上板：出声；默认 10 太小 |
+| v3.3 | `release/ke-body-v3.3.bin` | + 默认音量 18；表情字库补 ˍ 皿 ﹏；💢 💧 做成线条图标 | **未在真机运行过** |
 
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
@@ -35,7 +36,7 @@
 | 7 | 按住说话 | 按住 ≥0.5 秒开始录音（ES8311 麦克风，16kHz 单声道 16bit），松手结束，最长 30 秒。录音时脸 `(—o—)`，角落「在听」 |
 | 8 | 录音上传 | 松手后把 WAV `POST` 到 NVS 里保存的地址（`Content-Type: audio/wav`），串口命令 `server <url>` 设置；没设置时气泡提示 |
 | 9 | 出声 | `POST /play` body 是 WAV（16kHz 或 24kHz 单声道 16bit），喇叭播放，播放时脸 `(—▽—)` |
-| 10 | 音量 | 默认 10；`POST /volume` body 0–100；串口 `volume <n>`。0 = 静音，100 = 芯片最大（+32dB），每 10 格约 6dB |
+| 10 | 音量 | 默认 18；`POST /volume` body 0–100；串口 `volume <n>`。0 = 静音，100 = 芯片最大（+32dB），每 10 格约 6dB |
 | 11 | 电脑端 | `pc/ke_bridge.py` 收录音存文件；`pc/ke_send.py` 给板子发 face/say/play/volume… |
 
 ### 第三期
@@ -59,7 +60,7 @@
 3. 一行烧录（合并好的单文件固件，从地址 0 写入）：
 
 ```
-python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.2.bin
+python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.3.bin
 ```
 
 （v1 / v2 文件都保留，换文件名即可回退。NVS 里的 Wi-Fi、服务器地址、亮度等设置在各版本之间通用，重新烧录不会丢。）
@@ -87,7 +88,7 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.
 | `wifi` / `wifi clear` | 显示当前 SSID、状态、IP / 清除凭据并重启 |
 | `server http://192.168.1.5:8770/hear` | 录音上传地址（电脑上 `ke_bridge.py` 的地址），立即生效 |
 | `server` / `server clear` | 显示 / 清除 |
-| `volume <0-100>` / `volume` | 喇叭音量（只在内存里，重启回到默认 10）。0 静音，100 = 芯片最大，每 10 格约 6dB |
+| `volume <0-100>` / `volume` | 喇叭音量（只在内存里，重启回到默认 18）。0 静音，100 = 芯片最大，每 10 格约 6dB |
 | `rotate 0|90|180|270` / `rotate` | 屏幕方向，存 NVS，立即生效 |
 | `bright <5-100>` / `bright` | 背光亮度，存 NVS |
 | `night 23:00 07:00 20` / `night off` / `night` | 夜间自动变暗：开始 结束 亮度；`night` 显示当前时间、是否已对时、是否处于夜间 |
@@ -162,7 +163,7 @@ v2 无声 → v3 把 AXP2101 电源全开、ES8311 寄存器对齐官方驱动�
 
 v3.2 起固件自己管这根脚：开机拉低（功放关），每次播放（`/play`、`audio test`）前拉高并等 30ms，播完拉低。空闲时功放关掉，没有底噪也省电。
 
-音量：ES8311 的音量寄存器是 0.5dB 一格，原来的驱动按百分比线性写寄存器，10% 对应 -83dB 等于没声。v3.2 改成分贝映射：100 = 芯片最大（+32dB，就是你试 `volume 100` 时听到的那个），每降 10 格约小 6dB，10 ≈ -22dB，0 = 静音。默认 10。
+音量：ES8311 的音量寄存器是 0.5dB 一格，原来的驱动按百分比线性写寄存器，10% 对应 -83dB 等于没声。v3.2 改成分贝映射：100 = 芯片最大（+32dB，就是你试 `volume 100` 时听到的那个），每降 10 格约小 6dB，0 = 静音。默认 18（上板试出 10 听不到）。
 
 诊断命令都还在（`audio test / mic / regs / slot`、`pmic`、`tca`、`gpio`），只是开机不再碰 P7 以外的任何脚。
 
@@ -250,11 +251,11 @@ release/ke-body-v1.bin / v2 / v3   合并固件
 
 | 字体 | 像素 | 内容 | 来源 |
 |------|------|------|------|
-| face64 / face44 / face30 | 64/44/30 | ASCII + 约 280 个颜文字常用符号 | DejaVu Sans，缺字回退文泉驿正黑 / Unifont |
+| face64 / face44 / face30 | 64/44/30 | ASCII + 约 280 个颜文字常用符号（含 ˍ 皿 ﹏）+ 两个线条图标 💢 💧 | DejaVu Sans，缺字回退文泉驿正黑 / Unifont；图标由脚本用 Pillow 画 |
 | text22 | 22 | ASCII + 中文标点 + **GB2312 全部 6763 个汉字** + 颜文字符号 | 文泉驿正黑（WenQuanYi Zen Hei） |
 | small14 | 14 | ASCII + 状态用的几十个汉字 | 文泉驿正黑 |
 
-位图总计约 1.9MB，全部放在 Flash，不占 RAM。字库里没有的字画一个空心方框。颜文字先试 64px，放不下降到 44px、30px，再放不下折两行。横屏时脸的可用宽度是 456px，长颜文字更容易保持 64px。
+位图总计约 1.9MB，全部放在 Flash，不占 RAM。字库里没有的字画一个空心方框。💢（U+1F4A2）和 💧（U+1F4A7）是彩色 emoji，没有单色字体，`gen_fonts.py` 里的 `render_icon()` 用线条画成和表情同高的位图，当作普通字形放进 face 字体和气泡字体，颜色跟随主题。要加别的 emoji 图标就在 `ICON_CODEPOINTS` 里加一项并写画法。颜文字先试 64px，放不下降到 44px、30px，再放不下折两行。横屏时脸的可用宽度是 456px，长颜文字更容易保持 64px。
 
 字体版权：DejaVu（自由字体许可）、文泉驿正黑（GPLv2 + 字体嵌入例外）、GNU Unifont（GPLv2+ 字体例外 / OFL）。
 
@@ -281,7 +282,7 @@ v3 / v3.1：AXP2101 应答、电源轨全开；ES8311 寄存器与官方驱动�
 ### 第三期（v3.2，未上板）
 
 1. **功放开关时序**：播放前拉高 P7 等 30ms，播完拉低。开关瞬间可能有轻微「啪」声，有的话把 `main/audio.c` 里 30ms 加大，或改成常开（`board_amp_enable(true)` 放到 `board_init` 之后即可）。
-2. **音量映射**是按「100 = 你听到的最大值」推的，默认 10 ≈ 比那个小 22dB。太小/太大直接 `volume <n>` 调，默认值在 `main/audio.h` 的 `AUDIO_DEFAULT_VOLUME`。
+2. **音量映射**是按「100 = 你听到的最大值」推的；默认 18 是上板调的。改默认值在 `main/audio.h` 的 `AUDIO_DEFAULT_VOLUME`。
 3. **AXP2101 初始化**保留官方全开的做法（已上板，没发现副作用）。
 4. **横屏方向 90 vs 270**：显示用官方表；90 和 270 都是横屏，只是上下颠倒，哪个 USB 口在你顺手的一边就用哪个。默认 90，不顺就 `rotate 270`。
 5. **触摸坐标换算**：按官方 esp_lcd_touch 的「先镜像后交换」实现，没验证。`touchlog on` 后按屏幕四个角看打印的换算坐标是否和屏幕位置一致（横屏左上角应接近 0,0，右下角接近 479,319）。目前固件只用「有没有按」，坐标错不影响功能，但第四期要用。

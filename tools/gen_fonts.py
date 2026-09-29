@@ -38,6 +38,7 @@ KAOMOJI = (
     "ヽヾ〇ﾉ゛゜ヘへ∠☜☞ღ∑屮凸┌┐└┘─│┬┴┻━╯╰╭╮︹︺﹀ﾞ･✩♀♂✌☝〒ミ彡"
     "αβγδθλμπστφψ∞≈≠≤≥±√∴∵♩♫〆ヾ〃ᵒᵔᵕᵘᵛꈍ‿◞◟ᐛᐖ"
     "、。，！？：；“”‘’「」『』《》【】"
+    "ˍ皿﹏"
 )
 
 CJK_PUNCT = "，。、！？：；“”‘’（）《》〈〉【】『』「」…—～·￥％＋－＝×÷℃"
@@ -111,6 +112,81 @@ def render_glyph(font, ch):
     return bytes(data), w, h, x0 - ox, y0 - oy, adv
 
 
+# --- vector icons for characters that only exist as colour emoji -------------
+# Drawn with Pillow as white line art, same height as the font's ascent, so the
+# renderer treats them like any other glyph.
+
+ICON_CODEPOINTS = {0x1F4A2: "anger", 0x1F4A7: "droplet"}   # 💢 💧
+
+
+def render_icon(kind, size, ascent):
+    """Return (bitmap4bpp, w, h, xoff, yoff, adv). Rendered 4x and downsampled for AA."""
+    S = int(ascent * 0.95)          # icon box side in pixels
+    if S < 8:
+        S = 8
+    K = 4
+    B = S * K
+    img = Image.new("L", (B, B), 0)
+    d = ImageDraw.Draw(img)
+    lw = max(1, int(B * 0.11))      # line width
+    if kind == "anger":
+        # 💢: four arcs bowing toward the centre (comic anger mark)
+        r = int(B * 0.58)
+        corners = [(0, 0), (B, 0), (0, B), (B, B)]
+        starts = [(0, 90), (90, 180), (270, 360), (180, 270)]
+        for (cx, cy), (a0, a1) in zip(corners, starts):
+            box = (cx - r, cy - r, cx + r, cy + r)
+            d.arc(box, a0 + 8, a1 - 8, fill=255, width=lw)
+        # trim to the glyph box: arcs already clipped by the image bounds
+    elif kind == "droplet":
+        # 💧: teardrop outline, pointed top, round bottom
+        cx = B // 2
+        rr = int(B * 0.30)
+        cy = int(B * 0.66)
+        top = int(B * 0.04)
+        import math
+        # tangent points from the top apex to the circle
+        dx, dy = 0, cy - top
+        dist = math.hypot(dx, dy)
+        ang = math.asin(rr / dist)
+        base = math.atan2(dy, dx)
+        pts = []
+        for s in (-1, 1):
+            t = base + s * ang
+            # tangent point on the circle
+            px = cx + rr * math.cos(t - s * math.pi / 2)
+            py = cy + rr * math.sin(t - s * math.pi / 2)
+            pts.append((px, py))
+        def shape(shrink, fill):
+            d.ellipse((cx - rr + shrink, cy - rr + shrink, cx + rr - shrink, cy + rr - shrink), fill=fill)
+            # triangle apex .. tangent points (shrunk toward the centroid)
+            tri = [(cx, top + shrink * 1.6), pts[0], pts[1]]
+            gx = sum(p[0] for p in tri) / 3
+            gy = sum(p[1] for p in tri) / 3
+            tri2 = [(gx + (x - gx) * (1 - shrink * 1.2 / max(1, rr)), gy + (y - gy) * (1 - shrink * 1.2 / max(1, rr))) for x, y in tri]
+            d.polygon(tri2, fill=fill)
+        shape(0, 255)
+        shape(lw, 0)
+    small = img.resize((S, S), Image.LANCZOS)
+    bbox = small.getbbox()
+    if bbox is None:
+        return b"", 0, 0, 0, 0, S
+    x0, y0, x1, y1 = bbox
+    w, h = x1 - x0, y1 - y0
+    px = small.load()
+    stride = (w + 1) // 2
+    data = bytearray(stride * h)
+    for y in range(h):
+        for x in range(w):
+            v = px[x0 + x, y0 + y] >> 4
+            i = y * stride + x // 2
+            data[i] |= (v << 4) if (x % 2 == 0) else v
+    pad = max(1, S // 10)
+    # sit on the baseline, top aligned with the cap height
+    yoff = -(ascent - (ascent - S) // 2) + y0
+    return bytes(data), w, h, pad + x0, yoff, w + 2 * pad + 0
+
+
 def build_font(name, size, chars, chain):
     """chain: list of font paths in priority order."""
     fonts = {}
@@ -132,9 +208,16 @@ def build_font(name, size, chars, chain):
         data, w, h, xoff, yoff, adv = render_glyph(fonts[path], ch)
         glyphs.append((cp, w, h, xoff, yoff, adv, len(blob)))
         blob += data
-    glyphs.sort()
     primary = ImageFont.truetype(chain[0], size)
     ascent, descent = primary.getmetrics()
+    for cp, kind in ICON_CODEPOINTS.items():
+        if cp in seen:
+            continue
+        data, w, h, xoff, yoff, adv = render_icon(kind, size, ascent)
+        glyphs.append((cp, w, h, xoff, yoff, adv, len(blob)))
+        blob += data
+        seen.add(cp)
+    glyphs.sort()
     line_h = ascent + descent
     if missing:
         print(f"  [{name}] {len(missing)} chars have no glyph in any source font: {''.join(missing)}")
