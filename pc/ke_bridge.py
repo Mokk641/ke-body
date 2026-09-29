@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-ke_bridge.py - tiny receiver for recordings from the ke-body board.
+ke_bridge.py - tiny receiver for everything the ke-body board sends.
 
     python ke_bridge.py            # listens on 0.0.0.0:8770
     python ke_bridge.py --port 8770 --inbox inbox
 
-The board POSTs a WAV (Content-Type: audio/wav) to /hear after every
-push-to-talk. Each one is saved as inbox/YYYYMMDD-HHMMSS.wav and the file
-name is printed. Speech-to-text is NOT done here; hook it up separately.
+Endpoints (the board derives them from the `server` setting, e.g.
+http://<pc-ip>:8770/hear -> /msg, /photo live next to it):
 
-Standard library only.
+    POST /hear   WAV recording (push-to-talk)  -> inbox/YYYYMMDD-HHMMSS.wav
+    POST /msg    UTF-8 text (quick button, shake) -> inbox/YYYYMMDD-HHMMSS.txt
+    POST /photo  JPEG she chose to send        -> inbox/photos/YYYYMMDD-HHMMSS.jpg
+
+Every file name is printed on one line. Speech-to-text / replies are NOT done
+here; hook the inbox folder up to whatever you like. Standard library only.
 """
 import argparse
 import datetime
@@ -18,6 +22,15 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def unique_path(folder, stamp, ext):
+    path = os.path.join(folder, stamp + ext)
+    n = 1
+    while os.path.exists(path):
+        n += 1
+        path = os.path.join(folder, f"{stamp}-{n}{ext}")
+    return path
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -35,26 +48,47 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(200, "ke_bridge ok\n")
 
     def do_POST(self):
-        if self.path.rstrip("/") != "/hear":
-            self._reply(404, "unknown path (use POST /hear)\n")
-            return
+        path = self.path.rstrip("/")
         length = int(self.headers.get("Content-Length", "0"))
         data = self.rfile.read(length)
-        if len(data) < 44 or data[:4] != b"RIFF":
-            self._reply(400, "not a wav\n")
-            return
-        os.makedirs(self.inbox, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = os.path.join(self.inbox, stamp + ".wav")
-        n = 1
-        while os.path.exists(path):        # two recordings within one second
-            n += 1
-            path = os.path.join(self.inbox, f"{stamp}-{n}.wav")
-        with open(path, "wb") as f:
-            f.write(data)
-        secs = max(0, len(data) - 44) / (16000 * 2)
-        print(f"{path}  ({len(data)} bytes, ~{secs:.1f}s from {self.client_address[0]})", flush=True)
-        self._reply(200, "ok\n")
+        who = self.client_address[0]
+
+        if path == "/hear":
+            if len(data) < 44 or data[:4] != b"RIFF":
+                self._reply(400, "not a wav\n")
+                return
+            os.makedirs(self.inbox, exist_ok=True)
+            out = unique_path(self.inbox, stamp, ".wav")
+            with open(out, "wb") as f:
+                f.write(data)
+            secs = max(0, len(data) - 44) / (16000 * 2)
+            print(f"{out}  ({len(data)} bytes, ~{secs:.1f}s from {who})", flush=True)
+            self._reply(200, "ok\n")
+        elif path == "/msg":
+            text = data.decode("utf-8", "replace").strip()
+            if not text:
+                self._reply(400, "empty\n")
+                return
+            os.makedirs(self.inbox, exist_ok=True)
+            out = unique_path(self.inbox, stamp, ".txt")
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+            print(f"{out}  {text!r} from {who}", flush=True)
+            self._reply(200, "ok\n")
+        elif path == "/photo":
+            if len(data) < 4 or data[:2] != b"\xff\xd8":
+                self._reply(400, "not a jpeg\n")
+                return
+            folder = os.path.join(self.inbox, "photos")
+            os.makedirs(folder, exist_ok=True)
+            out = unique_path(folder, stamp, ".jpg")
+            with open(out, "wb") as f:
+                f.write(data)
+            print(f"{out}  ({len(data)} bytes from {who})", flush=True)
+            self._reply(200, "ok\n")
+        else:
+            self._reply(404, "unknown path (POST /hear, /msg, /photo)\n")
 
     def log_message(self, fmt, *args):   # keep the console to one line per file
         pass

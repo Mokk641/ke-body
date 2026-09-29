@@ -142,19 +142,19 @@ static void tick_cb(void *arg)
         if (s_flash_ms <= 0) s_state->flash = 0;
         redraw = true;
     }
-    if (s_anim) {
-        if (s_blush_ms > 0) {
-            s_blush_ms -= TICK_MS;
-            int t = 2200 - s_blush_ms;            /* 0..2200 */
-            int a = t < 500 ? t * 255 / 500 : (t > 1500 ? (2200 - t) * 255 / 700 : 255);
-            if (a < 0) a = 0;
-            s_state->blush_alpha = a;
-            if (s_blush_ms <= 0 && strcmp(s_override_face, BLUSH_FACE) == 0) {
-                s_override_face[0] = 0;
-                recompute();
-            }
-            redraw = true;
+    if (s_blush_ms > 0) {
+        s_blush_ms -= TICK_MS;
+        int t = 2200 - s_blush_ms;            /* 0..2200 */
+        int a = t < 500 ? t * 255 / 500 : (t > 1500 ? (2200 - t) * 255 / 700 : 255);
+        if (a < 0) a = 0;
+        s_state->blush_alpha = s_anim ? a : 255;
+        if (s_blush_ms <= 0 && strcmp(s_override_face, BLUSH_FACE) == 0) {
+            s_override_face[0] = 0;
+            recompute();
         }
+        redraw = s_anim || s_blush_ms <= 0;
+    }
+    if (s_anim) {
         if (s_shake_ms > 0) {
             s_shake_ms -= TICK_MS;
             int t = 600 - s_shake_ms;
@@ -349,10 +349,6 @@ void ui_blush(void)
     s_state->blush_alpha = s_anim ? 0 : 255;
     recompute();
     unlock();
-    if (!s_anim) {
-        /* no fade: plain 2 s timer through the tick */
-        lock(); s_blush_ms = 2200; unlock();
-    }
     mark_dirty();
 }
 

@@ -10,7 +10,8 @@
 | v3 | `release/ke-body-v3.bin` | + 第三期：AXP2101 电源初始化、横屏、亮度、夜间变暗、黑底白字、串口诊断命令 | 已上板：PMIC 应答、电源全开、ES8311 寄存器正确，**喇叭仍无声** |
 | v3.1 | `release/ke-body-v3.1.bin` | + 不用耳朵的音频诊断：`audio test` 内部回环峰值、`audio mic`、`audio slot`、`gpio` 命令 | 已上板：回环 R=8000 证明 I2S/DAC 通；**找到功放使能 = TCA9554 P7** |
 | v3.2 | `release/ke-body-v3.2.bin` | + 开机接管 TCA9554 P7（播放时开功放、空闲关）；音量改为分贝映射 | 已上板：出声；默认 10 太小 |
-| v3.3 | `release/ke-body-v3.3.bin` | + 默认音量 18；表情字库补 ˍ 皿 ﹏；💢 💧 做成线条图标 | **未在真机运行过** |
+| v3.3 | `release/ke-body-v3.3.bin` | + 默认音量 18；表情字库补 ˍ 皿 ﹏；💢 💧 做成线条图标 | 已上板：屏幕、触摸、横屏 270、黑底、亮度、夜间变暗、喇叭、回环、麦克风都正常 |
+| v4 | `release/ke-body-v4.bin`（合并）<br>`release/ke-body-app-v4.bin`（只含应用） | + 第四期：聊天记录 + 快捷按钮、动画、QMI8658 摇晃/扣桌、静音提醒、相机/相册/寄照片/远程 /snap、bridge 收 /msg /photo | **未在真机运行过**，见 §6 |
 
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
@@ -49,6 +50,19 @@
 | 15 | 夜间变暗 | 连网后 NTP 对时（`ntp.aliyun.com`，备用 `pool.ntp.org`，东八区）。`night 23:00 07:00 20` 存 NVS，`night off` 关闭。**默认开，23:00–07:00 亮度 20** |
 | 16 | 黑底白字 | `theme dark|light`、`POST /theme`，存 NVS，**默认 dark**（气泡深色底浅色字） |
 
+### 第四期
+
+| # | 功能 | 说明 |
+|---|------|------|
+| 17 | 只刷应用区 | 每版另出 `release/ke-body-app-vX.bin`，烧到 **0x10000**，NVS 里的 Wi-Fi、server、rotate、亮度、按钮等全部保留 |
+| 18 | 快捷按钮 | 屏幕下方两排按钮（默认 想你了 / 抱抱 / 在干嘛 / 晚安 + 一排表情），点一下发到 bridge `/msg` 并进聊天记录；`POST /buttons` JSON 配置，存 NVS |
+| 19 | 聊天记录 | 脸常驻顶部，下面是聊天：克的回复（`/say`）在左，她发的（按钮、摇晃、`/heard` 语音转的字）在右，上下滑动，最近 50 条（PSRAM） |
+| 20 | 六轴 QMI8658 | 摇两下 = 发一条按钮配置里的 `shake` 文字（默认「想你了」）；屏幕朝下 1.5 秒 = 睡脸 + 背光压到 5；拿起或摸一下恢复。`autorotate on` 可选自动转屏（默认关，不改 rotate 设置） |
+| 21 | 静音提醒 | 收到 `/say` 时屏幕边框轻闪两下；`chime on` 再加一段很轻的两音提示（默认关） |
+| 22 | 相机 | 聊天界面「相机」键进相机：实时取景（约 5–10 fps），点取景或「拍照」拍一张 SXGA 1280×1024 JPEG，存 SD 卡 `/sdcard/DCIM/`（没卡存内部 Flash 最多 12 张）；「相册」左右滑看、删除、「寄给克」（`POST /photo`，**不点绝不上传**） |
+| 23 | 让克看看 | `peek on` / `POST /peek on`（存 NVS，默认关）时电脑可 `GET /snap` 远程拍一张直接回传 JPEG，屏幕角落常亮小眼睛；关着时 `/snap` 一律 403 |
+| 24 | 小动画 | 待机每 3–13 秒随机眨眼；睡脸时 z/Z 从脸右边往上飘淡出；摸脸「//」粉色渐显渐隐；摇晃时脸左右抖两下；`anim off` 全关 |
+
 语音转文字、文字转语音不在固件里，电脑那边另外接。
 
 ---
@@ -63,7 +77,15 @@
 python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.3.bin
 ```
 
-（v1 / v2 文件都保留，换文件名即可回退。NVS 里的 Wi-Fi、服务器地址、亮度等设置在各版本之间通用，重新烧录不会丢。）
+**第四期起只刷应用区**（保留 NVS 里的所有设置）：
+
+```
+python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body-app-v4.bin
+```
+
+注意：v4 改了分区表（多了一个 4MB 的 `storage` 分区给照片用），**从 v3.x 升到 v4 的第一次必须烧合并版** `ke-body-v4.bin`（从 0x0），之后的 v4.x 才能只刷 0x10000。合并版从 0x0 整片写入，NVS 区（0x9000）会被写成 0xFF，也就是**合并版会清掉 Wi-Fi、server 等设置**，烧完要重新 `wifi` / `server`；只刷应用区不会。
+
+（旧版本文件都保留，换文件名即可回退。）
 
 如果板子没自动进入下载模式：按住 **BOOT** 键，按一下 **RESET**，松开 BOOT，再执行上面的命令。
 烧完后按一下 RESET（或重新插电）。冷上电后固件会主动软复位一次（官方例子的做法），属正常现象。
@@ -72,7 +94,7 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.
 
 注意：上面是 esptool **v5** 的写法（本仓库用 esptool v5.4.0 生成固件）。如果你装的是 esptool v4，子命令是下划线：`write_flash`。想快一点可以加 `-b 921600`。
 
-`release/*.bin` 内容 = bootloader（0x0）+ 分区表（0x8000）+ 应用（0x10000），中间用 0xFF 填充。v3 约 3.3MB。
+`release/ke-body-vX.bin` 内容 = bootloader（0x0）+ 分区表（0x8000）+ 应用（0x10000），中间用 0xFF 填充；`ke-body-app-vX.bin` 只有应用（烧到 0x10000）。v4 合并版约 3.4MB。
 
 ---
 
@@ -102,7 +124,17 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.
 | `gpio <n> 0|1|in` | 驱动一个空闲 ESP32 引脚，找功放使能用；占用引脚会拒绝 |
 | `audio regs` | 打印 ES8311 全部寄存器和芯片 ID |
 | `audio gain <0-7>` | 麦克风 PGA 增益，0=0dB，每步 6dB，默认 5（30dB） |
-| `face <颜文字>` / `say <文字>` | 本地测试屏幕，不走网络 |
+| `msg <文字>` | 等于按了一个快捷按钮：进聊天记录并发到 bridge `/msg` |
+| `buttons` | 打印当前按钮配置 JSON |
+| `anim on|off` | 小动画总开关，存 NVS |
+| `chime on|off` | 收到消息时是否响一声，存 NVS，默认关 |
+| `imu` / `imu invert on|off` | 打印加速度；如果「扣在桌上」方向反了（拿起来反而睡），`imu invert on` |
+| `autorotate on|off` | 随手转屏（默认关；轴向未验证） |
+| `cam on|off|shot|gallery` | 进/出相机、拍一张、进相册 |
+| `cam vflip on|off` / `cam mirror on|off` | 画面上下翻/左右镜像，存 NVS（默认 vflip on，同官方例子） |
+| `peek on|off` | 「让克看看」远程拍照开关，存 NVS，默认关 |
+| `photos` | 列出照片（SD 卡或内部） |
+| `face <颜文字>` / `say <文字>` | 本地测试屏幕，不走网络（`say` 会进聊天记录） |
 | `help` | 列出所有命令 |
 
 ### 3.2 HTTP 接口（局域网，端口 80）
@@ -119,6 +151,14 @@ curl -X POST --data-binary "30"    http://192.168.1.23/volume            # 0-100
 curl -X POST --data-binary "90"    http://192.168.1.23/rotate            # 0 / 90 / 180 / 270，存 NVS
 curl -X POST --data-binary "40"    http://192.168.1.23/brightness        # 5-100，存 NVS（低于 5 按 5）
 curl -X POST --data-binary "light" http://192.168.1.23/theme             # dark / light，存 NVS
+curl -X POST --data-binary "我想你"  http://192.168.1.23/heard             # 她说的话（语音转文字结果）进聊天右侧，不闪
+curl -X POST -H "Content-Type: application/json" --data-binary @buttons.json http://192.168.1.23/buttons
+        # {"text":["想你了","抱抱","在干嘛","晚安"],"emoji":["(´ω`)","(≧▽≦)","♡","💧"],"shake":"想你了"}
+        # 每排最多 8 个、每个最多 12 字，整体 <1KB；也可以只给一个数组（=文字行）。GET /buttons 看当前值
+curl -X POST --data-binary "off"   http://192.168.1.23/anim              # 动画 on/off
+curl -X POST --data-binary "on"    http://192.168.1.23/chime             # 提示音 on/off
+curl -X POST --data-binary "on"    http://192.168.1.23/peek              # 让克看看 on/off
+curl -o snap.jpg                   http://192.168.1.23/snap              # 远程拍一张（peek 关着返回 403）
 ```
 
 接口只解析 body；body 末尾的换行会被去掉。接口没有任何鉴权，只在受信任的局域网内用。
@@ -132,7 +172,15 @@ python pc/ke_bridge.py
 # ke_bridge listening on 0.0.0.0:8770, saving to .../pc/inbox
 ```
 
-板子每次按住说话松手后，会把 WAV `POST` 到 `/hear`，脚本存成 `pc/inbox/年月日-时分秒.wav`（16kHz 单声道 16bit）并在控制台打印一行文件名。`pc/inbox/` 已加入 `.gitignore`。
+板子发来的东西都进 `pc/inbox/`，每个文件打印一行：
+
+| 板子发的 | 路径 | 存成 |
+|---|---|---|
+| 按住说话的录音（WAV 16k 单声道） | `POST /hear` | `inbox/年月日-时分秒.wav` |
+| 快捷按钮 / 摇晃发的文字 | `POST /msg` | `inbox/年月日-时分秒.txt` |
+| 相册里点「寄给克」的照片 | `POST /photo` | `inbox/photos/年月日-时分秒.jpg` |
+
+`/msg` `/photo` 的地址是板子从 `server` 设置推出来的（把最后一段 `/hear` 换掉），只要设一个地址。`pc/inbox/` 已加入 `.gitignore`。
 板子上要先设置：`server http://<电脑IP>:8770/hear`。Windows 防火墙第一次会弹窗，允许专用网络访问即可。
 
 **给板子发东西**（脚本对板子的请求**不走** `HTTP_PROXY` 等代理环境变量，不用再设 `NO_PROXY`）：
@@ -147,7 +195,20 @@ python pc/ke_send.py volume 60
 python pc/ke_send.py rotate 90
 python pc/ke_send.py brightness 40
 python pc/ke_send.py theme dark
+python pc/ke_send.py heard "我想你"        # 语音转文字的结果送回板子，显示在她那一侧
+python pc/ke_send.py buttons buttons.json # 按钮配置（文件或 JSON 字符串）
+python pc/ke_send.py anim off
+python pc/ke_send.py chime on
+python pc/ke_send.py peek on
+python pc/ke_send.py snap photo.jpg       # 远程拍一张存到本地（需要 peek on）
 ```
+
+### 3.3.1 屏幕操作（第四期）
+
+- **聊天界面**：顶部是脸（右上角 IP，peek 开着时多一个小眼睛），中间聊天记录可上下滑，底部第一排文字按钮 + 「相机」，第二排表情按钮。点脸或记录区 = 脸红；**按住 0.5 秒 = 说话**（同第二期）；按钮点一下就发。
+- **相机**：点「相机」进入取景；点画面或「拍照」拍一张，画面下方提示「已保存 xxx.jpg」；「相册」看照片；「返回」回聊天并关相机（省电）。取景是横屏 480×320，竖屏模式下只显示中间一截。
+- **相册**：左右滑动切换（拖动超过 40px），「删除」直接删当前这张，「寄给克」发到 bridge `/photo`（只有点了才发），「返回」回聊天。
+- **睡觉**：屏幕朝下扣桌上 1.5 秒 → 睡脸 + z 飘 + 背光 5；拿起来或摸一下屏幕恢复。
 
 ### 3.4 按住说话的流程
 
@@ -179,6 +240,10 @@ v3.2 起固件自己管这根脚：开机拉低（功放关），每次播放（
   - `ESP-IDF/07_lvgl_wifi/components/esp_lcd_st7796/` — ST7796 面板驱动（**原样拷贝到本仓库 `components/esp_lcd_st7796/`**，Apache-2.0）
   - `ESP-IDF/07_lvgl_wifi/components/esp_lcd_touch_ft6336/` — FT6336 寄存器定义
   - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_es8311_port.cpp` — I2S 引脚、ES8311 地址、无功放使能脚
+  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_camera_port.cpp` — **OV5640 引脚**、SCCB 走 I2C 口 0、20MHz XCLK、vflip（第四期）
+  - `ESP-IDF/07_lvgl_wifi/components/esp32-camera/` — Espressif esp32-camera 2.0.15（**原样拷贝到 `components/esp32-camera/`**，去掉 examples/test）
+  - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_sdcard_port.cpp` — **SD 卡 SDMMC 1 线引脚**（第四期）
+  - `ESP-IDF/07_lvgl_wifi/components/sensorlib/src/REG/QMI8658Constants.h` + `esp_qmi8658_port.cpp` — QMI8658 地址、寄存器、±4g 配置（本固件自己按寄存器写了个 60 行的驱动，没有拷 SensorLib）
   - `ESP-IDF/07_lvgl_wifi/components/esp_port/esp_axp2101_port.cpp` — **AXP2101 电源轨设置**（第三期，`main/pmic.cpp` 逐行照抄电压和使能，去掉了看门狗和中断）
   - `ESP-IDF/07_lvgl_wifi/components/XPowersLib/` — AXP2101 驱动 XPowersLib（MIT），**拷贝到本仓库 `components/XPowersLib/`**（只留 src 和 Kconfig）
   - `Arduino/examples/01_audio_out`、`04_es8311_example` — ES8311 初始化顺序、音量 70、模拟麦克风
@@ -205,6 +270,9 @@ v3.2 起固件自己管这根脚：开机拉低（功放关），每次播放（
 | 音频编解码 | **ES8311**，I2C 地址 0x18，I2S0：MCLK=GPIO12，BCLK=GPIO13，LRCK=GPIO15，DOUT(ESP→DAC)=GPIO16，DIN(ADC→ESP)=GPIO14 | `esp_es8311_port.cpp` |
 | 功放使能 | **TCA9554 P7，高电平开**。官方例子 `pa_pin = GPIO_NUM_NC`、任何公开代码都没写；2026-09-29 真机逐脚试出来的 | 本仓库实测 |
 | 电源管理 | **AXP2101**，I2C 0x34。官方：DC1~5 3.3/1.0/3.3/1.0/3.3V，ALDO1~4 3.3V，BLDO1 1.5V，BLDO2 2.8V，DLDO1/2 3.3V，CPUSLDO 1.0V，除 DC1 外全部使能 | `esp_axp2101_port.cpp` |
+| 摄像头 | **OV5640**，DVP：XCLK=38 PCLK=41 VSYNC=17 HREF=18 D0~D7 = 45 47 48 46 42 40 39 21，SCCB 共用 I2C（SDA8/SCL7），无 PWDN/RESET | `esp_camera_port.cpp` |
+| SD 卡 | SDMMC 1 线：CLK=11 CMD=10 D0=9 | `esp_sdcard_port.cpp` |
+| 六轴 | **QMI8658**，I2C 0x6B（备选 0x6A），WHO_AM_I=0x05 | SensorLib 寄存器表 |
 | 显示方向表 | 0: swap0 mx1 my0（已验证）；90: swap1 mx1 my1；180: swap0 mx0 my1；270: swap1 mx0 my0 | 官方 `main.cpp` |
 | 触摸方向表 | 0: 无；90: mirror_y+swap；180: mirror_x+mirror_y；270: mirror_x+swap（esp_lcd_touch 先镜像后交换） | 官方 `esp_3inch5_touch_port_init` + esp_lcd_touch 源码 |
 
@@ -225,11 +293,17 @@ main/
   board.c/.h      板级：I2C、TCA9554、ST7796、旋转、背光、FT6336（含坐标换算、touchlog）
   pmic.cpp/.h     AXP2101 电源轨（照官方例子），dump / 单路开关
   audio.c/.h      ES8311 + I2S：录音、播放、音量、采样率切换、测试音、寄存器 dump
-  light.c/.h      亮度（NVS）+ 夜间变暗 + NTP
+  light.c/.h      亮度（NVS）+ 夜间变暗 + NTP + 睡觉时的临时压暗
+  imu.c/.h        QMI8658：摇晃、扣桌、自动转屏（可选）
+  camera.c/.h     OV5640：JPEG 取景解码、拍照、相册解码
+  storage.c/.h    SD 卡 / Flash 分区上的 DCIM
+  cam_ui.c/.h     相机、相册屏幕，远程 /snap（peek）
+  bridge.c/.h     出站队列：/msg /photo
+  app_actions.h   触摸动作回调（main.c 实现）
   uploader.c/.h   esp_http_client POST WAV
   settings.c/.h   NVS 里的字符串设置
-  ui.c/.h         UI 状态 + 渲染任务 + 旋转/主题（NVS）+ 脸/角落临时覆盖
-  ui_render.c/.h  画面布局（纯 C，横竖屏、深浅两套配色）
+  ui.c/.h         UI 状态：聊天环、按钮配置、动画 tick、触摸状态机、旋转/主题（NVS）
+  ui_render.c/.h  画面布局 + 命中测试（纯 C，横竖屏、深浅两套配色、聊天/相机/相册三个屏幕）
   gfx.c/.h        小型软件渲染器
   kb_font.h / fonts/   位图字体
   wifi_mgr.c/.h   NVS 凭据 + STA 连接 + 自动重连
@@ -238,11 +312,13 @@ main/
 components/esp_lcd_st7796/   官方 ST7796 驱动（原样拷贝）
 components/es8311/           官方 Arduino 库里的 Espressif es8311 驱动（I2C 层改为 i2c_master）
 components/XPowersLib/       官方例子用的 AXP2101 驱动（MIT）
-pc/ke_bridge.py              电脑端：收录音，存 pc/inbox/
-pc/ke_send.py                电脑端：给板子发 face / say / play / volume / rotate / brightness / theme / ping
+components/esp32-camera/     Espressif 摄像头驱动 2.0.15（官方仓库里的那份）
+pc/ke_bridge.py              电脑端：收录音 /hear、文字 /msg、照片 /photo，存 pc/inbox/
+pc/ke_send.py                电脑端：给板子发 face / say / heard / play / volume / rotate / brightness / theme / buttons / anim / chime / peek / snap / ping
 tools/gen_fonts.py           字体生成脚本
 tools/host_preview.c         电脑上渲染画面到 PPM（支持横竖屏、深浅色）
-release/ke-body-v1.bin / v2 / v3   合并固件
+release/ke-body-vX.bin       合并固件（0x0）
+release/ke-body-app-vX.bin   只含应用（0x10000，第四期起）
 ```
 
 ### 5.1 字体方案
@@ -279,7 +355,19 @@ v2：开机 `ES8311 in Slave mode and I2S format`、`audio: ready`；家里 2.4G
 
 v3 / v3.1：AXP2101 应答、电源轨全开；ES8311 寄存器与官方驱动一致；`audio test` 回环 R=8000、`play done` 999ms（I2S、DAC 通）；TCA9554 P7 拉高后喇叭出声，`volume 100` 很大。
 
-### 第三期（v3.2，未上板）
+v3.3：横屏 270、黑底、亮度、夜间变暗、喇叭（TCA9554 P7 使能）、`audio test` 回环 R=8000、麦克风有信号。按住录音上传还没测。
+
+### 第四期（v4，未上板）
+
+1. **触摸坐标**：第四期开始真的用坐标（按钮、滑动、相册）。方向换算按官方表写，第三期没验证。上板先 `touchlog on`，按四个角看换算坐标对不对；错了的话按钮会点不准，告诉我具体对应关系我改 `board_touch_read()`。
+2. **相机**：esp32-camera 在这块板上的初始化是按官方 esp_camera_port.cpp 写的，但改成了 JPEG 模式 + 尺寸切换（取景 HVGA、拍照 SXGA），没实测；看串口 `camera: sensor PID 0x5640`。取景帧率估计 5–10 fps。画面上下/左右不对用 `cam vflip` / `cam mirror`。
+3. **SD 卡**：1 线 SDMMC，FAT32 卡；没插卡走内部 4MB 分区（第一次会格式化，几秒）。
+4. **QMI8658**：地址 0x6B/0x6A 自动探测；摇晃阈值 1.9g 两次/0.9 秒；「屏幕朝下」假设芯片 Z 轴朝屏幕外（az ≈ +1g 时正放），反了用 `imu invert on`。自动转屏的轴向映射未验证，默认关。
+5. **动画**：50ms tick 全帧重绘，眨眼/z 飘时约 10 fps；触摸和 HTTP 在别的任务里，理论上不受影响。
+6. **静音提醒**：边框闪两下用的是主题里的粉色；提示音是固件生成的两音。
+7. **聊天记录**只在内存，重启清空（按施工单）。
+8. **只刷应用区**：v4 改了分区表，第一次要烧合并版（会清 NVS）；之后 `ke-body-app-vX.bin` 到 0x10000。
+9. 第二期遗留：按住录音上传、24k 播放未测。
 
 1. **功放开关时序**：播放前拉高 P7 等 30ms，播完拉低。开关瞬间可能有轻微「啪」声，有的话把 `main/audio.c` 里 30ms 加大，或改成常开（`board_amp_enable(true)` 放到 `board_init` 之后即可）。
 2. **音量映射**是按「100 = 你听到的最大值」推的；默认 18 是上板调的。改默认值在 `main/audio.h` 的 `AUDIO_DEFAULT_VOLUME`。
@@ -313,4 +401,4 @@ idf.py merge-bin -o /绝对路径/ke-body/release/ke-body-v3.bin     # 路径要
 
 ## 8. 没做的事
 
-摄像头、SD 卡、IMU、RTC、侧面按键、OTA、HTTPS、鉴权、语音识别 / 合成（电脑端另外接）。HTTP 接口没有任何认证，只应在受信任的局域网内使用。
+RTC、侧面按键、OTA、HTTPS、鉴权、语音识别 / 合成（电脑端另外接）。HTTP 接口没有任何认证，只应在受信任的局域网内使用。
