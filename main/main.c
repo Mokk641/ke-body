@@ -265,6 +265,12 @@ void app_main(void)
         if (settings_get_str("cal", cal, sizeof cal)) sscanf(cal, "%d %d %d %d", &c[0], &c[1], &c[2], &c[3]);
         board_lcd_set_calibration(c[0], c[1], c[2], c[3]);
     }
+    {   /* saved touch active area: "xmin xmax ymin ymax" (raw) */
+        char tc[40];
+        int r[4];
+        if (settings_get_str("touchcal", tc, sizeof tc) && sscanf(tc, "%d %d %d %d", &r[0], &r[1], &r[2], &r[3]) == 4)
+            board_touch_set_range(r[0], r[1], r[2], r[3]);
+    }
     ui_start();
     light_init();
     bridge_start();

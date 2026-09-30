@@ -113,7 +113,11 @@ static float ease01(float t)
 
 static void lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
-static void mark_dirty(void) { xSemaphoreGive(s_dirty); }
+static volatile int s_full_dirty = 1;   /* something besides new ink points changed: redraw the whole screen */
+static int s_inc_n;                     /* render task: points of the current handwriting character already on the screen */
+static bool s_touchlog;
+static void mark_dirty(void) { __atomic_store_n(&s_full_dirty, 1, __ATOMIC_SEQ_CST); xSemaphoreGive(s_dirty); }
+static void mark_ink_dirty(void) { xSemaphoreGive(s_dirty); }      /* only new points: the render task draws just those */
 
 static bool an_on(int k) { return s_anim_master && s_an[k]; }
 
@@ -150,12 +154,23 @@ static void render_task(void *arg)
 {
     for (;;) {
         xSemaphoreTake(s_dirty, portMAX_DELAY);
+        int full = __atomic_exchange_n(&s_full_dirty, 0, __ATOMIC_SEQ_CST);
         lock();
         memcpy(s_snap, s_state, sizeof(ui_state_t));
         unlock();
         xSemaphoreTake(s_fb_lock, portMAX_DELAY);
-        ui_render(s_snap);
-        board_lcd_flush(s_fb);
+        const bool ink_page = s_snap->screen == UI_SCREEN_INK && s_snap->ink;
+        int npts = ink_page ? s_snap->ink->cur.npts : 0;
+        int x0, y0, x1, y1;
+        if (!full && ink_page && npts >= s_inc_n) {
+            /* only new pen points: put them on the screen as they are and push just that rectangle */
+            if (ui_render_ink_incremental(s_snap, s_inc_n, npts, &x0, &y0, &x1, &y1)) board_lcd_flush_rect(s_fb, x0, y0, x1, y1);
+            s_inc_n = npts;
+        } else {
+            ui_render(s_snap);
+            board_lcd_flush(s_fb);
+            s_inc_n = npts;                   /* read before drawing: points that arrive meanwhile are drawn twice, never lost */
+        }
         xSemaphoreGive(s_fb_lock);
     }
 }
@@ -179,6 +194,11 @@ static void tick_cb(void *arg)
         s_theme_tick = 0;
         int t = theme_for_mode();
         if (t != s_state->theme) { s_state->theme = t; redraw = true; }
+    }
+
+    if (s_state->dot_ms > 0) {
+        s_state->dot_ms -= TICK_MS;
+        if (s_state->dot_ms <= 0) redraw = true;
     }
 
     if (s_toast_ms > 0) {
@@ -927,8 +947,29 @@ static void handle_swipe(bool vertical, int total_dx, int total_dy)
     }
 }
 
+void ui_set_touchlog(bool on)
+{
+    s_touchlog = on;
+    lock();
+    s_state->dot_ms = 0;
+    unlock();
+    mark_dirty();
+}
+
+static void touch_dot(int x, int y)
+{
+    lock();
+    bool moved = abs(x - s_state->dot_x) > 3 || abs(y - s_state->dot_y) > 3 || s_state->dot_ms <= 0;
+    s_state->dot_x = x;
+    s_state->dot_y = y;
+    s_state->dot_ms = 900;
+    unlock();
+    if (moved) mark_dirty();
+}
+
 void ui_touch(bool down, int x, int y)
 {
+    if (s_touchlog && (down || s_down)) touch_dot(down ? x : s_last_x, down ? y : s_last_y);
     int64_t now = esp_timer_get_time();
     if (down && !s_down) {
         s_down = true;
@@ -946,7 +987,7 @@ void ui_touch(bool down, int x, int y)
             int nx, ny;
             ink_norm(x, y, &nx, &ny);
             s_ink_stroke = ink_pen_down(s_ink, nx, ny);
-            mark_dirty();
+            mark_ink_dirty();
         }
         return;
     }
@@ -955,14 +996,15 @@ void ui_touch(bool down, int x, int y)
         ink_norm(x, y, &nx, &ny);
         s_last_x = x;
         s_last_y = y;
-        if (ink_pen_move(s_ink, nx, ny)) mark_dirty();
+        if (ink_pen_move(s_ink, nx, ny)) mark_ink_dirty();
         return;
     }
     if (!down && s_down && s_ink_stroke) {
         s_down = false;
         s_ink_stroke = false;
         ink_pen_up(s_ink);
-        mark_dirty();
+        /* a stroke drawn as straight pieces is redrawn as a smooth curve; a dot or a short tick needs no redraw */
+        if (s_ink->cur.nstrokes > 0 && s_ink->cur.npts - s_ink->cur.start[s_ink->cur.nstrokes - 1] >= 3) mark_dirty();
         return;
     }
     if (down && s_down) {

@@ -20,9 +20,9 @@
 #define COL_D_ICON          GFX_GREY(0xA3)   /* #A1A1A6 thin light-grey icons */
 #define COL_D_ICON_PRESSED  GFX_GREY(0xFF)   /* #FFFFFF icon while pressed */
 
-#define COL_D_KE_BUBBLE     GFX_GREY(0x27)   /* #262628 my bubble (left): iOS system grey */
+#define COL_D_KE_BUBBLE     GFX_GREY(0x3B)   /* #3A3A3C my bubble (left): dark grey, lighter than the black page */
 #define COL_D_KE_TEXT       GFX_GREY(0xFF)   /* #FFFFFF */
-#define COL_D_HER_BUBBLE    GFX_RGB(0x0A, 0x84, 0xFF)   /* #0A84FF her bubble (right): iOS blue */
+#define COL_D_HER_BUBBLE    GFX_RGB(0xF0, 0x60, 0x9E)   /* #F0609E her bubble (right): pink (#FF7EB3 was too pale for white text: 2.4:1, this is 3.3:1) */
 #define COL_D_HER_TEXT      GFX_GREY(0xFF)   /* #FFFFFF */
 #define COL_D_AVATAR_BG     GFX_GREY(0x2D)   /* #2C2C2E little circle with my face in the top bar */
 #define COL_D_AVATAR_TEXT   GFX_GREY(0xFF)   /* #FFFFFF */
@@ -51,9 +51,9 @@
 #define COL_L_ICON          GFX_GREY(0x5C)   /* #5C5C5C dark-grey icons */
 #define COL_L_ICON_PRESSED  GFX_RGB(0x00, 0x00, 0x00)   /* #000000 */
 
-#define COL_L_KE_BUBBLE     GFX_GREY(0xEA)   /* #E9E9EB */
-#define COL_L_KE_TEXT       GFX_RGB(0x00, 0x00, 0x00)   /* #000000 */
-#define COL_L_HER_BUBBLE    GFX_RGB(0x00, 0x7A, 0xFF)   /* #007AFF */
+#define COL_L_KE_BUBBLE     GFX_GREY(0x1C)   /* #1C1C1E my bubble (left): near-black */
+#define COL_L_KE_TEXT       GFX_GREY(0xFF)   /* #FFFFFF */
+#define COL_L_HER_BUBBLE    GFX_RGB(0xF0, 0x60, 0x9E)   /* #F0609E her bubble (right): pink */
 #define COL_L_HER_TEXT      GFX_GREY(0xFF)   /* #FFFFFF */
 #define COL_L_AVATAR_BG     GFX_GREY(0xE7)   /* #E5E5EA */
 #define COL_L_AVATAR_TEXT   GFX_GREY(0x1D)   /* #1C1C1E */

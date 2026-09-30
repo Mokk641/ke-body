@@ -311,6 +311,38 @@ esp_err_t board_init(void)
 void board_lcd_set_calibration(int gamma_x100, int r_pct, int g_pct, int b_pct) { colorcal_set(gamma_x100, r_pct, g_pct, b_pct); }
 void board_lcd_get_calibration(int out[4]) { colorcal_get(out); }
 
+void board_lcd_flush_rect(const uint16_t *fb, int x0, int y0, int x1, int y1)
+{
+    const int w = s_w, h = s_h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > w) x1 = w;
+    if (y1 > h) y1 = h;
+    if (x1 <= x0 || y1 <= y0) return;
+    const int rw = x1 - x0;
+    const int chunk_rows = FLUSH_BYTES / (rw * 2);
+    int buf = 0, inflight = 0;
+    for (int y = y0; y < y1; y += chunk_rows) {
+        int rows = (y + chunk_rows <= y1) ? chunk_rows : y1 - y;
+        if (inflight == 2) {
+            xSemaphoreTake(s_flush_done, portMAX_DELAY);
+            inflight--;
+        }
+        uint16_t *dst = (uint16_t *)s_bounce[buf];
+        for (int r = 0; r < rows; r++) {
+            const uint16_t *src = fb + (size_t)(y + r) * w + x0;
+            if (colorcal_active()) colorcal_apply(dst + (size_t)r * rw, src, (size_t)rw);
+            else memcpy(dst + (size_t)r * rw, src, (size_t)rw * 2);
+        }
+        if (esp_lcd_panel_draw_bitmap(s_panel, x0, y, x1, y + rows, s_bounce[buf]) == ESP_OK) inflight++;
+        buf ^= 1;
+    }
+    while (inflight > 0) {
+        xSemaphoreTake(s_flush_done, portMAX_DELAY);
+        inflight--;
+    }
+}
+
 void board_lcd_flush(const uint16_t *fb)
 {
     const int w = s_w, h = s_h;
@@ -340,6 +372,23 @@ void board_lcd_flush(const uint16_t *fb)
 
 void board_touch_log(bool on) { s_touch_log = on; }
 
+static int s_tr[4] = { 0, BOARD_LCD_W - 1, 0, BOARD_LCD_H - 1 };          /* raw active area */
+static int s_seen[4] = { 4095, 0, 4095, 0 };
+
+void board_touch_set_range(int xmin, int xmax, int ymin, int ymax)
+{
+    if (xmax - xmin < 100 || ymax - ymin < 100 || xmin < 0 || ymin < 0) return;      /* nonsense: keep what we have */
+    s_tr[0] = xmin; s_tr[1] = xmax; s_tr[2] = ymin; s_tr[3] = ymax;
+}
+
+void board_touch_get_range(int out[4]) { memcpy(out, s_tr, sizeof s_tr); }
+
+void board_touch_seen(int out[4], bool reset)
+{
+    memcpy(out, s_seen, sizeof s_seen);
+    if (reset) { s_seen[0] = 4095; s_seen[1] = 0; s_seen[2] = 4095; s_seen[3] = 0; }
+}
+
 bool board_touch_read(uint16_t *x, uint16_t *y)
 {
     /* FT6336 registers (official esp_lcd_touch_ft6336.c): 0x02 = touch points,
@@ -352,15 +401,26 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
     if (i2c_read_reg(s_tp, 0x03, d, 4) != ESP_OK) return false;
     int rx = ((d[0] & 0x0F) << 8) | d[1];   /* raw, portrait frame 0..319 */
     int ry = ((d[2] & 0x0F) << 8) | d[3];   /* raw, portrait frame 0..479 */
+    if (rx < s_seen[0]) s_seen[0] = rx;
+    if (rx > s_seen[1]) s_seen[1] = rx;
+    if (ry < s_seen[2]) s_seen[2] = ry;
+    if (ry > s_seen[3]) s_seen[3] = ry;
+    /* stretch the panel's real active area to the whole screen (identity unless `touchcal` was used) */
+    rx = (rx - s_tr[0]) * (BOARD_LCD_W - 1) / (s_tr[1] - s_tr[0]);
+    ry = (ry - s_tr[2]) * (BOARD_LCD_H - 1) / (s_tr[3] - s_tr[2]);
+    if (rx < 0) rx = 0;
+    if (ry < 0) ry = 0;
+    if (rx > BOARD_LCD_W - 1) rx = BOARD_LCD_W - 1;
+    if (ry > BOARD_LCD_H - 1) ry = BOARD_LCD_H - 1;
 
     /* Official esp_lcd_touch flags per rotation (esp_3inch5_touch_port_init) applied
      * the way esp_lcd_touch does it: mirror first, then swap.
      *   90: mirror_y + swap    180: mirror_x + mirror_y    270: mirror_x + swap */
     int mx = rx, my = ry;
     switch (s_rotation) {
-    case 90:  my = BOARD_LCD_H - ry; break;
-    case 180: mx = BOARD_LCD_W - rx; my = BOARD_LCD_H - ry; break;
-    case 270: mx = BOARD_LCD_W - rx; break;
+    case 90:  my = BOARD_LCD_H - 1 - ry; break;
+    case 180: mx = BOARD_LCD_W - 1 - rx; my = BOARD_LCD_H - 1 - ry; break;
+    case 270: mx = BOARD_LCD_W - 1 - rx; break;
     default: break;
     }
     int lx = mx, ly = my;

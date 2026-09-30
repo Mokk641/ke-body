@@ -79,6 +79,7 @@ typedef struct {
     const uint16_t *frame;    /* byte-swapped RGB565 image to show (preview or photo), or NULL */
     int frame_w, frame_h;
     const ink_t *ink;         /* handwriting page: the strokes (owned by ui.c, read by the renderer) */
+    int dot_x, dot_y, dot_ms; /* touch marker (touchlog on): where, and how much longer it stays */
     bool review;              /* gallery screen shows the photo just taken (retake / send / keep) */
     bool sending;             /* a message/photo is on its way: buttons greyed, taps ignored */
     char cam_text[64];        /* status line on the camera/gallery screen */
@@ -127,6 +128,11 @@ int ui_chat_area_height(const ui_state_t *s);
 /* Emoji grid paging for the current orientation. */
 int ui_emoji_per_page(void);
 int ui_emoji_pages(const ui_state_t *s);
+
+/* Handwriting, incremental: draw the straight segments for points [from, to) of the current character on top of what
+ * is already on the screen (same pen as the full render) and return the changed rectangle (screen px, x1/y1 exclusive).
+ * false when nothing was drawn. Used while the pen is down so a line appears at once; the pen-up redraws it smooth. */
+bool ui_render_ink_incremental(const ui_state_t *s, int from, int to, int *x0, int *y0, int *x1, int *y1);
 
 /* The handwriting square in the current orientation (screen pixels): left, top, side. */
 void ui_ink_pad_rect(int *x, int *y, int *side);

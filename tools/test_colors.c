@@ -8,6 +8,7 @@
 #include "ui_render.h"
 #include "ui_colors.h"
 #include "colorcal.h"
+#include "ink.h"
 
 static int fails;
 #define CHECK(cond, ...) do { if (cond) printf("ok:   "); else { printf("FAIL: "); fails++; } printf(__VA_ARGS__); printf("\n"); } while (0)
@@ -60,10 +61,10 @@ int main(void)
         CHECK(worst <= 5, "GFX_GREY within %d levels of the requested grey (5-bit steps)", worst);
     }
     CHECK(GFX_RGB(255, 255, 255) == 0xFFFF && GFX_GREY(255) == 0xFFFF, "white is 0xFFFF");
-    CHECK(close_to(COL_D_KE_BUBBLE, 0x26, 0x26, 0x28), "my bubble ~ #262628");
-    CHECK(close_to(COL_D_HER_BUBBLE, 0x0A, 0x84, 0xFF), "her bubble ~ #0A84FF");
-    CHECK(close_to(COL_L_HER_BUBBLE, 0x00, 0x7A, 0xFF) && close_to(COL_L_KE_BUBBLE, 0xE9, 0xE9, 0xEB) && close_to(COL_L_BAR, 0xF2, 0xF2, 0xF7) &&
-          close_to(COL_L_SEP, 0xD1, 0xD1, 0xD6) && COL_L_BG == 0xFFFF, "light palette: #FFFFFF / #E9E9EB / #007AFF / #F2F2F7 / #D1D1D6");
+    CHECK(close_to(COL_D_KE_BUBBLE, 0x3A, 0x3A, 0x3C), "dark theme: my bubble ~ #3A3A3C (visible against black)");
+    CHECK(close_to(COL_D_HER_BUBBLE, 0xF0, 0x60, 0x9E) && COL_L_HER_BUBBLE == COL_D_HER_BUBBLE, "her bubble is pink #F0609E in both themes");
+    CHECK(close_to(COL_L_KE_BUBBLE, 0x1C, 0x1C, 0x1E) && COL_L_KE_TEXT == 0xFFFF && COL_L_HER_TEXT == 0xFFFF && close_to(COL_L_BAR, 0xF2, 0xF2, 0xF7) &&
+          close_to(COL_L_SEP, 0xD1, 0xD1, 0xD6) && COL_L_BG == 0xFFFF, "light palette: white page, my bubble #1C1C1E with white text, her white text, bars #F2F2F7, separators #D1D1D6");
     CHECK(close_to(COL_D_BAR, 0x1C, 0x1C, 0x1E), "bars ~ #1C1C1E");
     CHECK(close_to(COL_D_CAP, 0x2C, 0x2C, 0x2E) && close_to(COL_D_CELL, 0x2C, 0x2C, 0x2E), "capsules / cells ~ #2C2C2E");
     CHECK(COL_D_KE_TEXT == GFX_RGB(255, 255, 255) && COL_D_HER_TEXT == GFX_RGB(255, 255, 255), "both text colours are white");
@@ -91,8 +92,8 @@ int main(void)
             if (v == be(COL_D_KE_BUBBLE)) found_grey++;
             if (v == be(COL_D_BAR)) found_bar++;
         }
-    CHECK(found_blue > 500, "her bubble pixels in the framebuffer are byte-swapped #0A84FF (%d px)", found_blue);
-    CHECK(found_grey > 500, "my bubble pixels are byte-swapped #262628 (%d px)", found_grey);
+    CHECK(found_blue > 500, "her bubble pixels in the framebuffer are byte-swapped pink (%d px)", found_blue);
+    CHECK(found_grey > 500, "my bubble pixels are byte-swapped #3A3A3C (%d px)", found_grey);
     CHECK(found_bar > 3000, "top bar / bottom capsule pixels are byte-swapped #1C1C1E (%d px)", found_bar);
     CHECK(px(1, H / 2) == 0 && px(W - 1, H / 3) == 0, "space beside the bubbles is pure black");
     int old_green = 0;
@@ -106,6 +107,35 @@ int main(void)
     for (int i = 0; i < W * H; i++) if (fb[i] == be(GFX_RGB(0x0A, 0x84, 0xFF))) sw_blue++;
     CHECK(sw_blue > 1000, "colour test screen contains the #0A84FF swatch (%d px)", sw_blue);
     CHECK(ui_hit_test(s, 10, 10) == UI_HIT_TEST_EXIT, "any tap on the colour test leaves it");
+
+    /* 3b. incremental handwriting: only the new segments, only inside the returned rectangle */
+    {
+        static ink_t ink;
+        memset(&ink, 0, sizeof ink);
+        ink_pen_down(&ink, 100, 100);
+        for (int i = 1; i <= 6; i++) ink_pen_move(&ink, 100 + i * 60, 100 + i * 40);
+        s->screen = UI_SCREEN_INK;
+        s->ink = &ink;
+        ui_render(s);
+        static uint16_t before[320 * 480];
+        memcpy(before, fb, sizeof fb);
+        int from = ink.cur.npts;
+        ink_pen_move(&ink, 700, 500);
+        ink_pen_move(&ink, 800, 520);
+        int x0, y0, x1, y1;
+        CHECK(ui_render_ink_incremental(s, from, ink.cur.npts, &x0, &y0, &x1, &y1), "incremental ink draws something");
+        int outside = 0, inside = 0, wxs = gfx_width();
+        for (int y = 0; y < gfx_height(); y++)
+            for (int x = 0; x < wxs; x++) {
+                if (fb[y * wxs + x] == before[y * wxs + x]) continue;
+                if (x >= x0 && x < x1 && y >= y0 && y < y1) inside++; else outside++;
+            }
+        CHECK(inside > 50 && outside == 0, "only pixels inside the returned rectangle changed (%d inside, %d outside)", inside, outside);
+        CHECK(x1 - x0 < 200 && y1 - y0 < 200, "the rectangle is small (%dx%d), not the whole pad", x1 - x0, y1 - y0);
+        int px, py, side;
+        ui_ink_pad_rect(&px, &py, &side);
+        CHECK(x0 >= px && y0 >= py && x1 <= px + side && y1 <= py + side, "the rectangle stays inside the writing square");
+    }
 
     /* 4. calibration */
     colorcal_set(100, 100, 100, 100);

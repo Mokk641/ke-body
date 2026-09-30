@@ -304,7 +304,7 @@ static void draw_face_page(const palette_t *p, const ui_state_t *s, const geo_t 
 /* ---- chat page --------------------------------------------------------------------------------- */
 
 typedef struct { int lines; int w, h; gfx_line_t ln[8]; const uint8_t *thumb; int tw, th; } msg_layout_t;
-#define THUMB_PAD 10
+#define THUMB_PAD 6      /* pink border around the white handwriting panel inside her bubble */
 
 static int bubble_max_w(int W) { return W * 70 / 100; }
 
@@ -316,8 +316,8 @@ static void measure_msg(const chat_msg_t *m, int W, msg_layout_t *out)
         out->thumb = ink_thumb_get(m->ink_slot - 1, &out->tw, &out->th);
         if (out->thumb) {
             out->lines = 0;
-            out->w = out->tw + 2 * THUMB_PAD;
-            out->h = out->th + 2 * BUB_PADY;
+            out->w = out->tw + 8 + 2 * THUMB_PAD;
+            out->h = out->th + 8 + 2 * THUMB_PAD;
             if (out->h < 2 * BUB_R) out->h = 2 * BUB_R;
             return;
         }
@@ -385,7 +385,10 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
             bool her = m->who == CHAT_HER;
             int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
             gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
-            if (ml.thumb) gfx_blit_mask(x + THUMB_PAD, y + (ml.h - ml.th) / 2, ml.thumb, ml.tw, ml.th, p->her_txt);
+            if (ml.thumb) {                     /* white paper, dark ink, pink frame */
+                gfx_fill_round_rect(x + THUMB_PAD, y + THUMB_PAD, ml.tw + 8, ml.th + 8, 8, GFX_GREY(0xFF));
+                gfx_blit_mask(x + THUMB_PAD + 4, y + THUMB_PAD + 4, ml.thumb, ml.tw, ml.th, GFX_GREY(0x1C));
+            }
             for (int k = 0; k < ml.lines; k++) {
                 gfx_draw_text_n(f, x + BUB_PADX, y + BUB_PADY + k * lh + f->ascent, ml.ln[k].start, ml.ln[k].len,
                                 her ? p->her_txt : p->ke_txt);
@@ -639,6 +642,7 @@ typedef struct {
     int strip_x, strip_y, strip_w, strip_h;
     int pad_x, pad_y, pad;
     int bx[4], by[4], bw, bh;
+    int hu[4], hd[4], hl[4], hr[4];       /* how far each button's touch area reaches beyond it */
 } ink_geo_t;
 
 static void ink_layout(int W, int H, ink_geo_t *L)
@@ -650,14 +654,28 @@ static void ink_layout(int W, int H, ink_geo_t *L)
         int y0 = L->pad_y + L->pad + 10;
         L->bx[1] = 10;               L->by[1] = y0;                 /* 撤销一笔 | 清空 */
         L->bx[2] = 10 + L->bw + 8;   L->by[2] = y0;
-        L->bx[0] = 10;               L->by[0] = y0 + L->bh + 8;     /* 下一个 | 寄 */
-        L->bx[3] = 10 + L->bw + 8;   L->by[3] = y0 + L->bh + 8;
+        L->bx[0] = 10;               L->by[0] = y0 + L->bh + 12;    /* 下一个 | 寄 */
+        L->bx[3] = 10 + L->bw + 8;   L->by[3] = y0 + L->bh + 12;
+        /* touch areas, bigger than what is drawn: up, down (screen bottom side gets the full 10 px) */
+        for (int i = 0; i < 4; i++) {
+            bool low = i == 0 || i == 3;
+            L->hu[i] = low ? 6 : 5;              /* row 0 is only 10 px below the square */
+            L->hd[i] = low ? 10 : 6;
+            L->hl[i] = i == 0 || i == 1 ? 10 : 4;
+            L->hr[i] = i == 0 || i == 1 ? 4 : 10;
+        }
     } else {                                              /* landscape: square on the left, buttons stacked on the right */
         L->strip_y = 6; L->strip_h = 40;
         L->pad_y = L->strip_y + L->strip_h + 6;
         L->pad = H - L->pad_y - 8; L->pad_x = 10;
         L->bw = W - 10 - (L->pad_x + L->pad + 12); L->bh = 46;
-        for (int i = 0; i < 4; i++) { L->bx[i] = L->pad_x + L->pad + 12; L->by[i] = L->pad_y + i * (L->bh + 8); }
+        for (int i = 0; i < 4; i++) {
+            L->bx[i] = L->pad_x + L->pad + 12; L->by[i] = L->pad_y + i * (L->bh + 12);
+            L->hu[i] = i == 0 ? 8 : 6;
+            L->hd[i] = i == 3 ? 10 : 6;
+            L->hl[i] = 6;
+            L->hr[i] = 10;
+        }
     }
     L->back_x = 6; L->back_y = L->strip_y; L->back_w = 44; L->back_h = L->strip_h;
     L->strip_x = L->back_x + L->back_w + 4;
@@ -683,6 +701,41 @@ static void ink_draw_char(const ink_char_t *c, float ox, float oy, float scale, 
     ink_pen_t pen = { width, color };
     int n = c->nstrokes;
     for (int k = 0; k < n; k++) ink_flatten(c, k, ox, oy, scale, ink_draw_seg, &pen);
+}
+
+bool ui_render_ink_incremental(const ui_state_t *s, int from, int to, int *rx0, int *ry0, int *rx1, int *ry1)
+{
+    if (!s->ink || to <= from) return false;
+    const palette_t *p = (s->theme == UI_THEME_LIGHT) ? &PAL_LIGHT : &PAL_DARK;
+    ink_geo_t L;
+    ink_layout(gfx_width(), gfx_height(), &L);
+    const ink_char_t *c = &s->ink->cur;
+    if (to > c->npts) to = c->npts;
+    const float scale = (float)L.pad / (float)INK_RANGE;
+    float w = (float)L.pad * 0.028f;
+    if (w < 4.f) w = 4.f;
+    gfx_set_clip(L.pad_x, L.pad_y, L.pad, L.pad);
+    float bx0 = 1e9f, by0 = 1e9f, bx1 = -1e9f, by1 = -1e9f;
+    for (int j = from; j < to; j++) {
+        float x = (float)L.pad_x + (float)c->pts[j].x * scale, y = (float)L.pad_y + (float)c->pts[j].y * scale;
+        bool first = j == 0;
+        for (int m = 0; m < c->nstrokes && !first; m++) if (c->start[m] == j) first = true;
+        float px = x, py = y;
+        if (!first) { px = (float)L.pad_x + (float)c->pts[j - 1].x * scale; py = (float)L.pad_y + (float)c->pts[j - 1].y * scale; }
+        gfx_line(px, py, x, y, w, p->face);
+        if (fminf(px, x) < bx0) bx0 = fminf(px, x);
+        if (fminf(py, y) < by0) by0 = fminf(py, y);
+        if (fmaxf(px, x) > bx1) bx1 = fmaxf(px, x);
+        if (fmaxf(py, y) > by1) by1 = fmaxf(py, y);
+    }
+    gfx_clear_clip();
+    int m = (int)(w * 0.5f) + 3;
+    *rx0 = (int)bx0 - m; *ry0 = (int)by0 - m; *rx1 = (int)bx1 + m + 1; *ry1 = (int)by1 + m + 1;
+    if (*rx0 < L.pad_x) *rx0 = L.pad_x;
+    if (*ry0 < L.pad_y) *ry0 = L.pad_y;
+    if (*rx1 > L.pad_x + L.pad) *rx1 = L.pad_x + L.pad;
+    if (*ry1 > L.pad_y + L.pad) *ry1 = L.pad_y + L.pad;
+    return *rx1 > *rx0 && *ry1 > *ry0;
 }
 
 static void draw_ink_button(const palette_t *p, int x, int y, int w, int h, const char *label, bool pressed, bool disabled, bool primary)
@@ -751,9 +804,9 @@ static void draw_colortest(const ui_state_t *s, const geo_t *g)
     /* the colours the UI really uses (through the same macros), then a grey ramp and the primaries; the label is
      * the intended #RRGGBB, so the screen can be compared with the same hex value on a phone */
     static const struct { uint16_t col; const char *label; } sw[] = {
-        { COL_D_BG, "000000" }, { COL_D_BAR, "1C1C1E" }, { COL_D_KE_BUBBLE, "262628" }, { COL_D_CELL, "2C2C2E" },
-        { COL_D_HER_BUBBLE, "0A84FF" }, { COL_D_FACE, "FFFFFF" }, { COL_D_ONLINE, "30D158" }, { GFX_RGB(0x2F, 0x4A, 0x3A), "2F4A3A" },
-        { GFX_RGB(0xEF, 0xE3, 0xCF), "EFE3CF" }, { GFX_RGB(0xFF, 0x00, 0x00), "FF0000" }, { GFX_RGB(0x00, 0xFF, 0x00), "00FF00" },
+        { COL_D_BG, "000000" }, { COL_D_BAR, "1C1C1E" }, { COL_D_KE_BUBBLE, "3A3A3C" }, { COL_D_CELL, "2C2C2E" },
+        { COL_D_HER_BUBBLE, "F0609E" }, { COL_D_FACE, "FFFFFF" }, { COL_D_ONLINE, "30D158" }, { GFX_RGB(0x0A, 0x84, 0xFF), "0A84FF" },
+        { GFX_RGB(0xFF, 0x7E, 0xB3), "FF7EB3" }, { GFX_RGB(0xFF, 0x00, 0x00), "FF0000" }, { GFX_RGB(0x00, 0xFF, 0x00), "00FF00" },
         { GFX_RGB(0x00, 0x00, 0xFF), "0000FF" }, { GFX_GREY(0x10), "101010" }, { GFX_GREY(0x30), "303030" }, { GFX_GREY(0x60), "606060" },
         { GFX_GREY(0x90), "909090" }, { GFX_GREY(0xC0), "C0C0C0" }, { GFX_GREY(0xE0), "E0E0E0" },
     };
@@ -826,6 +879,13 @@ void ui_render(const ui_state_t *s)
     }
     draw_toast(p, s, &g);
 
+    if (s->dot_ms > 0) {                                  /* touchlog: where the controller thinks the finger is */
+        uint16_t yc = GFX_RGB(0xFF, 0xE0, 0x00);
+        gfx_ring((float)s->dot_x, (float)s->dot_y, 12.f, 2.5f, yc);
+        gfx_line((float)s->dot_x - 18.f, (float)s->dot_y, (float)s->dot_x + 18.f, (float)s->dot_y, 1.f, yc);
+        gfx_line((float)s->dot_x, (float)s->dot_y - 18.f, (float)s->dot_x, (float)s->dot_y + 18.f, 1.f, yc);
+    }
+
     if (s->flash > 0) {                                   /* optional silent alert: soft border (off by default) */
         uint16_t c = gfx_mix(p->bg, p->accent, s->flash);
         gfx_fill_rect(0, 0, g.W, 4, c);
@@ -850,13 +910,14 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
 
     if (s->screen == UI_SCREEN_CAMERA || s->screen == UI_SCREEN_GALLERY) {
         bool cam = s->screen == UI_SCREEN_CAMERA;
+        const int slop = 8;                                   /* touch areas 8 px taller than the buttons, up and down */
         btn_rect3(&g, 0, &x, &y, &w);
-        if (in_rect(px, py, x, y, w, BTN_H)) return cam ? UI_HIT_CAM_VIEW : UI_HIT_GAL_DELETE;
+        if (in_rect(px, py, x - 2, y - slop, w + 4, BTN_H + 2 * slop)) return cam ? UI_HIT_CAM_VIEW : UI_HIT_GAL_DELETE;
         btn_rect3(&g, 1, &x, &y, &w);
-        if (in_rect(px, py, x, y, w, BTN_H)) return cam ? UI_HIT_CAM_GALLERY : UI_HIT_GAL_SEND;
+        if (in_rect(px, py, x - 2, y - slop, w + 4, BTN_H + 2 * slop)) return cam ? UI_HIT_CAM_GALLERY : UI_HIT_GAL_SEND;
         btn_rect3(&g, 2, &x, &y, &w);
-        if (in_rect(px, py, x, y, w, BTN_H)) return UI_HIT_CAM_BACK;
-        if (py < y - BTN_GAP) return cam ? UI_HIT_CAM_VIEW : UI_HIT_GAL_VIEW;
+        if (in_rect(px, py, x - 2, y - slop, w + 4, BTN_H + 2 * slop)) return UI_HIT_CAM_BACK;
+        if (py < y - slop) return cam ? UI_HIT_CAM_VIEW : UI_HIT_GAL_VIEW;
         return UI_HIT_NONE;
     }
 
@@ -867,7 +928,8 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
         ink_layout(g.W, g.H, &L);
         if (in_rect(px, py, L.back_x, L.back_y, L.back_w, L.back_h)) return UI_HIT_INK_BACK;
         static const int ids[4] = { UI_HIT_INK_NEXT, UI_HIT_INK_UNDO, UI_HIT_INK_CLEAR, UI_HIT_INK_SEND };
-        for (int i = 0; i < 4; i++) if (in_rect(px, py, L.bx[i], L.by[i], L.bw, L.bh)) return ids[i];
+        for (int i = 0; i < 4; i++)
+            if (in_rect(px, py, L.bx[i] - L.hl[i], L.by[i] - L.hu[i], L.bw + L.hl[i] + L.hr[i], L.bh + L.hu[i] + L.hd[i])) return ids[i];
         if (in_rect(px, py, L.pad_x, L.pad_y, L.pad, L.pad)) return UI_HIT_INK_PAD;
         return UI_HIT_NONE;
     }
@@ -879,10 +941,10 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
 
     /* chat page */
     if (py < g.top_h) return px < 36 ? UI_HIT_TOP_BACK : UI_HIT_TOPBAR;
-    if (py >= g.bar_y) {
+    if (py >= g.bar_y - 10) {                                  /* the icons' touch area reaches 10 px above the strip */
         if (px < 64) return UI_HIT_PLUS;
         if (px >= g.W - 64) return UI_HIT_CAM_BTN;
-        return s->panel_open ? UI_HIT_NONE : UI_HIT_CHAT;      /* transparent strip: the chat is underneath */
+        if (py >= g.bar_y) return s->panel_open ? UI_HIT_NONE : UI_HIT_CHAT;      /* transparent strip: the chat is underneath */
     }
     if (s->panel_open && py >= g.panel_y) {
         if (s->panel_pos < 255) return UI_HIT_PANEL;                 /* still sliding: no button presses */

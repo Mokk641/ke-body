@@ -26,6 +26,15 @@ int board_lcd_height(void);
 /* Push a full frame (board_lcd_width x board_lcd_height, RGB565 byte-swapped)
  * to the panel. Blocks until sent. */
 void board_lcd_flush(const uint16_t *fb);
+/* Push only the rectangle [x0,x1) x [y0,y1) of a full-size framebuffer (stride = current width) - a small
+ * rectangle is ~1 ms, a whole frame ~60 ms. */
+void board_lcd_flush_rect(const uint16_t *fb, int x0, int y0, int x1, int y1);
+
+/* Touch panel active area: raw FT6336 values are stretched from [xmin,xmax] x [ymin,ymax] to the full screen.
+ * Default 0..319 x 0..479 (identity). `board_touch_seen` = smallest / largest raw value seen since boot. */
+void board_touch_set_range(int xmin, int xmax, int ymin, int ymax);
+void board_touch_get_range(int out[4]);
+void board_touch_seen(int out[4], bool reset);      /* xmin xmax ymin ymax */
 /* Optional colour calibration: gamma x100 (100 = none) and per-channel gain in percent. */
 void board_lcd_set_calibration(int gamma_x100, int r_pct, int g_pct, int b_pct);
 void board_lcd_get_calibration(int out[4]);

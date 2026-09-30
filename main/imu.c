@@ -32,7 +32,7 @@ static const char *TAG = "imu";
 
 static i2c_master_dev_handle_t s_dev;
 static imu_cb_t s_cb;
-static bool s_ready, s_invert, s_autorot;
+static bool s_ready, s_invert = true, s_autorot;   /* invert on by default: measured on the board (flat, screen up: z = -1.07) */
 static float s_ax, s_ay, s_az;
 
 static esp_err_t wr(uint8_t reg, uint8_t val)

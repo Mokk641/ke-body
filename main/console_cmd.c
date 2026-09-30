@@ -323,6 +323,41 @@ static int cmd_photos(int argc, char **argv)
     return 0;
 }
 
+static int cmd_touchrange(int argc, char **argv)
+{
+    int seen[4];
+    board_touch_seen(seen, argc == 2 && strcmp(argv[1], "reset") == 0);
+    if (argc == 2 && strcmp(argv[1], "reset") == 0) { printf("touchrange: reset, now touch all four edges and corners of the screen\n"); return 0; }
+    printf("raw touch values seen since boot: x %d..%d (screen 0..319), y %d..%d (screen 0..479)\n", seen[0], seen[1], seen[2], seen[3]);
+    printf("if a range is clearly smaller than the screen, the panel's edge is dead: run  touchcal %d %d %d %d\n",
+           seen[0], seen[1], seen[2], seen[3]);
+    return 0;
+}
+
+static int cmd_touchcal(int argc, char **argv)
+{
+    int r[4];
+    if (argc == 2 && strcmp(argv[1], "reset") == 0) {
+        board_touch_set_range(0, 319, 0, 479);
+        settings_set_str("touchcal", "0 319 0 479");
+        printf("touchcal: identity (saved)\n");
+        return 0;
+    }
+    if (argc == 5) {
+        for (int i = 0; i < 4; i++) r[i] = atoi(argv[1 + i]);
+        board_touch_set_range(r[0], r[1], r[2], r[3]);
+        board_touch_get_range(r);
+        char buf[40];
+        snprintf(buf, sizeof buf, "%d %d %d %d", r[0], r[1], r[2], r[3]);
+        settings_set_str("touchcal", buf);
+        printf("touchcal: raw x %d..%d, y %d..%d are stretched to the whole screen (saved)\n", r[0], r[1], r[2], r[3]);
+        return 0;
+    }
+    board_touch_get_range(r);
+    printf("touchcal: raw x %d..%d, y %d..%d   (usage: touchcal <xmin> <xmax> <ymin> <ymax> | touchcal reset)\n", r[0], r[1], r[2], r[3]);
+    return 0;
+}
+
 static int cmd_touchlog(int argc, char **argv)
 {
     if (argc != 2 || (strcmp(argv[1], "on") && strcmp(argv[1], "off"))) {
@@ -330,7 +365,8 @@ static int cmd_touchlog(int argc, char **argv)
         return 1;
     }
     board_touch_log(strcmp(argv[1], "on") == 0);
-    printf("touchlog %s\n", argv[1]);
+    ui_set_touchlog(strcmp(argv[1], "on") == 0);         /* + a yellow ring on the screen where the touch is */
+    printf("touchlog %s (serial: raw and mapped coordinates; screen: yellow ring + cross at the touch)\n", argv[1]);
     return 0;
 }
 
@@ -512,6 +548,8 @@ esp_err_t console_cmd_start(void)
         { .command = "msg",      .help = "msg <text>   send like a quick button (chat + bridge /msg)", .func = cmd_msg },
         { .command = "color",    .help = "color [gamma% r% g% b% | reset]  screen colour calibration (saved)", .func = cmd_color },
         { .command = "colortest", .help = "show swatches with their #RRGGBB to compare with a phone", .func = cmd_colortest },
+        { .command = "touchrange", .help = "touchrange [reset]  smallest / largest raw touch values seen (dead panel edges?)", .func = cmd_touchrange },
+        { .command = "touchcal", .help = "touchcal [xmin xmax ymin ymax | reset]  stretch the panel's real touch area to the screen (saved)", .func = cmd_touchcal },
         { .command = "buttons",  .help = "buttons [reset]  show the quick-button config JSON / restore defaults", .func = cmd_buttons },
         { .command = "anim",     .help = "anim [blink|blush|zzz|shake|flash] on|off  (no name = all; saved)", .func = cmd_anim },
         { .command = "chime",    .help = "chime on|off  soft tone on new message (saved)", .func = cmd_chime },

@@ -72,6 +72,9 @@ void ui_set_gallery_pos(int index, int count);
 /* handwriting page (the strokes are kept while you go back to the chat) */
 void ui_ink_open(void);
 
+/* debugging aid: draw a ring where the finger is (`touchlog on`) */
+void ui_set_touchlog(bool on);
+
 /* touch dispatch (from the touch task): x,y in current rotation frame.
  * x,y are ignored when down == false; the last position seen while down is used. */
 void ui_touch(bool down, int x, int y);

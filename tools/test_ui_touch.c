@@ -28,6 +28,7 @@ esp_err_t board_lcd_set_rotation(int r) { bool sw = r == 90 || r == 270; s_rot_w
 int board_lcd_width(void) { return s_rot_w; }
 int board_lcd_height(void) { return s_rot_h; }
 void board_lcd_flush(const uint16_t *fb) { (void)fb; }
+void board_lcd_flush_rect(const uint16_t *fb, int x0, int y0, int x1, int y1) { (void)fb; (void)x0; (void)y0; (void)x1; (void)y1; }
 static char s_rotate[8] = "270";
 static char s_saved_anim[8][8];
 bool settings_get_str(const char *k, char *out, unsigned n)
@@ -458,6 +459,47 @@ int main(void)
     CHECK(st->ink->cur.nstrokes == 0, "清空 clears the pad");
     ui_set_screen(UI_SCREEN_CHAT);
     settle();
+
+    /* ---- bigger touch areas near the bottom ---- */
+    {
+        ui_set_screen(UI_SCREEN_INK);
+        snap();
+        int W = gfx_width(), H = gfx_height();
+        int pxx, pyy, ss;
+        ui_ink_pad_rect(&pxx, &pyy, &ss);
+        int seek_y_send = -1, seek_y_low = -1;
+        for (int y = H - 1; y > 0; y--) if (ui_hit_test(st, W - 20, y) == UI_HIT_INK_SEND) { seek_y_send = y; break; }
+        for (int y = 0; y < H; y++) if (ui_hit_test(st, W - 20, y) == UI_HIT_INK_SEND) { seek_y_low = y; break; }
+        CHECK(seek_y_send > 0 && seek_y_send - seek_y_low >= 46 + 12, "寄 touch area is taller than the 40-46 px button (%d px)", seek_y_send - seek_y_low + 1);
+        /* landscape column: every button has a touch area and none overlaps another */
+        int prev = -1, changes = 0;
+        for (int y = pyy; y < H; y++) {
+            int h = ui_hit_test(st, W - 20, y);
+            if (h != prev) { changes++; prev = h; }
+        }
+        CHECK(changes <= 9, "landscape button column has clean, non-overlapping touch areas (%d transitions)", changes);
+        to_chat();
+        snap();
+        CHECK(ui_hit_test(st, 20, gfx_height() - 44 - 8) == UI_HIT_PLUS && ui_hit_test(st, gfx_width() - 20, gfx_height() - 44 - 8) == UI_HIT_CAM_BTN,
+              "the + and camera touch areas reach 10 px above the bottom strip");
+        ui_set_screen(UI_SCREEN_CAMERA);
+        snap();
+        int cam_lo = -1, cam_hi = -1;
+        for (int y = 0; y < gfx_height(); y++) if (ui_hit_test(st, 80, y) == UI_HIT_CAM_VIEW && y > gfx_height() / 2) { if (cam_lo < 0) cam_lo = y; cam_hi = y; }
+        CHECK(cam_hi - cam_lo + 1 >= 30 + 16, "camera buttons have 8 px more touch area above and below (%d px)", cam_hi - cam_lo + 1);
+        to_chat();
+    }
+
+    /* ---- touchlog: a marker follows the finger ---- */
+    ui_set_touchlog(true);
+    host_now_us += 30000; ui_touch(true, 200, 100);
+    host_now_us += 30000; ui_touch(true, 210, 110);
+    snap();
+    CHECK(st->dot_ms > 0 && st->dot_x == 210 && st->dot_y == 110, "touchlog on: marker at the touch (%d,%d)", st->dot_x, st->dot_y);
+    host_now_us += 30000; ui_touch(false, 0, 0);
+    ticks(25); snap();
+    CHECK(st->dot_ms <= 0, "marker disappears about a second after release");
+    ui_set_touchlog(false);
 
     /* ---- sending: buttons are ignored while a message / photo is on its way ---- */
     to_chat();
