@@ -9,6 +9,7 @@
 #include "pics.h"
 #include "imgdec.h"
 #include "storage.h"
+#include "music.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -158,6 +159,57 @@ static esp_err_t image_post(httpd_req_t *req)
     if (id <= 0) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
     ESP_LOGI(TAG, "picture from Ke: %dx%d", w, h);
     ui_ke_picture(id);
+    return ok(req);
+}
+
+static void percent_decode(char *s)
+{
+    char *o = s;
+    for (; *s; s++) {
+        if (s[0] == '%' && s[1] && s[2]) {
+            char hex[3] = { s[1], s[2], 0 };
+            *o++ = (char)strtol(hex, NULL, 16);
+            s += 2;
+        } else {
+            *o++ = s[0] == '+' ? ' ' : s[0];
+        }
+    }
+    *o = 0;
+}
+
+/* POST /music: an MP3 from the PC (header X-Title = the name, percent-encoded UTF-8). It goes to /sdcard/MUSIC, or to RAM
+ * when there is no card, starts playing at once and appears on top of the list. */
+static esp_err_t music_post(httpd_req_t *req)
+{
+    char title[MUSIC_TITLE_LEN + 32] = "song";
+    if (httpd_req_get_hdr_value_str(req, "X-Title", title, sizeof title) == ESP_OK) percent_decode(title);
+    size_t total = req->content_len;
+    if (total < 1024) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "that is not an MP3");
+    music_sink_t *sink = music_sink_open(title, total);
+    if (!sink) {
+        httpd_resp_set_status(req, "507 Insufficient Storage");
+        return httpd_resp_sendstr(req, "no room: put an SD card in (without a card a song may be at most 5 MB)");
+    }
+    uint8_t *chunk = malloc(4096);
+    if (!chunk) { music_sink_finish(sink, false); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory"); }
+    size_t got = 0;
+    bool good = true;
+    while (got < total && good) {
+        int r = httpd_req_recv(req, (char *)chunk, total - got < 4096 ? total - got : 4096);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0) { good = false; break; }
+        good = music_sink_write(sink, chunk, (size_t)r);
+        got += (size_t)r;
+    }
+    free(chunk);
+    char shown[MUSIC_TITLE_LEN + 4];
+    snprintf(shown, sizeof shown, "%s", music_sink_title(sink));
+    if (!good) { music_sink_finish(sink, false); return ESP_FAIL; }
+    if (!music_sink_finish(sink, true)) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not keep the song");
+    ESP_LOGI(TAG, "song from Ke: %s (%u bytes)", shown, (unsigned)got);
+    char line[MUSIC_TITLE_LEN + 8];
+    snprintf(line, sizeof line, "♪ %s", shown);
+    ui_set_say(line);
     return ok(req);
 }
 
@@ -363,6 +415,7 @@ esp_err_t http_api_start(void)
         { .uri = "/heard",  .method = HTTP_POST, .handler = heard_post },
         { .uri = "/ink",    .method = HTTP_POST, .handler = ink_post },
         { .uri = "/image",  .method = HTTP_POST, .handler = image_post },
+        { .uri = "/music",  .method = HTTP_POST, .handler = music_post },
         { .uri = "/buttons", .method = HTTP_POST, .handler = buttons_post },
         { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
         { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },

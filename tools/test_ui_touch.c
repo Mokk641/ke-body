@@ -57,6 +57,8 @@ void app_on_long_press(void) { n_long_press++; }
 void app_on_long_release(void) { n_long_release++; }
 void app_on_swipe(int dir) { n_swipes++; last_swipe = dir; }
 void app_on_touch_activity(void) {}
+static int n_vol; static int last_vol;
+void app_set_volume(int pct) { n_vol++; last_vol = pct; }
 static int n_ink_sent; static size_t last_ink_len; static uint8_t last_ink_sig[8];
 void app_send_ink(const uint8_t *png, size_t len) { n_ink_sent++; last_ink_len = len; memcpy(last_ink_sig, png, 8); }
 
@@ -561,6 +563,69 @@ int main(void)
         snap();
         CHECK(st->screen == UI_SCREEN_CHAT && n_taps == 0, "tap in the viewer returns to the chat");
         (void)hx2; (void)hy2;
+    }
+
+    /* ---- music ---- */
+    to_chat();
+    tap_hit(UI_HIT_PLUS); settle();
+    CHECK(tap_hit(UI_HIT_MUSIC_OPEN) && n_taps == 1 && taps[0] == UI_HIT_MUSIC_OPEN, "the 音乐 capsule is a button (the app opens the player)");
+    CHECK(find_hit(UI_HIT_GAME_OPEN, &fx, &fy), "the 游戏 capsule is there too");
+    ui_panel_set(false); settle();
+    {
+        music_info_t mi = { .count = 30, .current = 2, .playing = true, .elapsed_s = 10, .total_s = 200, .progress_pm = 50, .volume = 18 };
+        snprintf(mi.title, sizeof mi.title, "夜曲");
+        static char names[100][UI_MUSIC_TITLE];
+        for (int i = 0; i < 30; i++) snprintf(names[i], sizeof names[i], "第 %d 首", i);
+        ui_set_music(&mi, names);
+        ui_set_screen(UI_SCREEN_MUSIC);
+        snap();
+        CHECK(st->music.count == 30 && st->music.playing, "player state arrives");
+        static const int ids[] = { UI_HIT_MUSIC_PREV, UI_HIT_MUSIC_PLAY, UI_HIT_MUSIC_NEXT };
+        for (int i = 0; i < 3; i++) CHECK(tap_hit(ids[i]) && n_taps == 1 && taps[0] == ids[i], "player button %d taps", ids[i]);
+        CHECK(tap_hit(UI_HIT_MUSIC_LIST), "list button");
+        snap();
+        CHECK(st->screen == UI_SCREEN_MUSIC_LIST, "-> song list page");
+        CHECK(tap_hit(UI_HIT_MUSIC_LIST_BACK), "list back button");
+        snap();
+        CHECK(st->screen == UI_SCREEN_MUSIC, "-> player again");
+        /* volume slider: a drag sets the volume continuously and never becomes a tap */
+        int vx, vy;
+        CHECK(find_hit(UI_HIT_MUSIC_VOL, &vx, &vy), "volume slider hit area");
+        reset_counts(); n_vol = 0;
+        int x_lo = ui_music_vol_from_x(0), x_hi = ui_music_vol_from_x(gfx_width());
+        CHECK(x_lo == 0 && x_hi == 100, "slider maps the ends to 0 and 100");
+        host_now_us += 400000;
+        ui_touch(true, vx, vy);
+        for (int i = 1; i <= 10; i++) { host_now_us += 8000; ui_touch(true, vx + i * 12, vy + 5); }
+        host_now_us += 8000; ui_touch(false, 0, 0);
+        CHECK(n_vol >= 8 && n_taps == 0 && last_vol > 40, "dragging the slider changes the volume (%d updates, ends at %d)", n_vol, last_vol);
+        /* list scrolling and row taps */
+        ui_set_screen(UI_SCREEN_MUSIC_LIST);
+        snap();
+        CHECK(ui_music_list_max_scroll(st) > 500, "30 songs need scrolling (max %d px)", ui_music_list_max_scroll(st));
+        reset_counts();
+        host_now_us += 400000;
+        ui_touch(true, 200, 250);
+        for (int y = 250; y >= 100; y -= 10) { host_now_us += 8000; ui_touch(true, 200, y); }
+        host_now_us += 8000; ui_touch(false, 0, 0);
+        snap();
+        CHECK(st->music_scroll >= 120 && n_taps == 0, "dragging up scrolls the list (%d px) and does not play anything", st->music_scroll);
+        int rx = -1, ry = -1;
+        for (int y = 60; y < gfx_height() && rx < 0; y += 4) if (ui_hit_test(st, 200, y) >= UI_HIT_MUSIC_ROW0) { rx = 200; ry = y; }
+        int row = ui_hit_test(st, rx, ry) - UI_HIT_MUSIC_ROW0;
+        reset_counts();
+        host_now_us += 400000;
+        press_release(rx, ry, 60);
+        CHECK(n_taps == 1 && taps[0] == UI_HIT_MUSIC_ROW0 + row && row >= 2, "tap on a row of the scrolled list picks that song (#%d)", row);
+        ui_set_screen(UI_SCREEN_CHAT);
+        ui_set_music_playing(true);
+        snap();
+        CHECK(!strcmp(st->face, "(—ω—)♪"), "the face hums while a song plays (%s)", st->face);
+        ui_set_music_playing(false);
+        snap();
+        CHECK(strcmp(st->face, "(—ω—)♪") != 0, "and goes back afterwards");
+        CHECK(gfx_has_glyph(&kb_font_face96, 0x266A) && gfx_has_glyph(&kb_font_face18, 0x266A) && gfx_has_glyph(&kb_font_text22, 0x266A),
+              "the note character exists in the face and bubble fonts");
     }
 
     /* ---- bigger touch areas near the bottom ---- */

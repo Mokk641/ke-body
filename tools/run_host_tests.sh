@@ -46,3 +46,8 @@ echo
 echo "== pictures =="
 gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_pics" tools/test_pics.c main/pics.c
 "$OUT/test_pics"
+
+echo
+echo "== mp3 decoder =="
+gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_mp3" tools/test_mp3.c main/mp3src.c -lm
+"$OUT/test_mp3" tools/testdata

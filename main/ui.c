@@ -25,6 +25,7 @@ static const char *TAG = "ui";
 #define SLEEP_FACE     "(—_—)"
 #define NOTICE_FACE    "(—o—)"      /* the face flips to this for a second when a message arrives */
 #define KEY_ROTATE     "rotate"
+#define MUSIC_FACE "(—ω—)♪"
 #define KEY_THEME      "theme_mode"   /* light | dark | auto (v6.1: new key, so an old saved "dark" does not stick) */
 #define KEY_BUTTONS    "buttons"
 #define KEY_ANIM       "anim"       /* master switch; per-animation keys are an_<name> */
@@ -119,13 +120,15 @@ static bool s_touchlog;
 static void mark_dirty(void) { __atomic_store_n(&s_full_dirty, 1, __ATOMIC_SEQ_CST); xSemaphoreGive(s_dirty); }
 static void mark_ink_dirty(void) { xSemaphoreGive(s_dirty); }      /* only new points: the render task draws just those */
 
+static bool s_music_face;                /* a song is playing: the face hums along */
+
 static bool an_on(int k) { return s_anim_master && s_an[k]; }
 
 /* recompute drawn face/corner from base + overrides; lock held */
 static void recompute(void)
 {
     const char *face = s_override_face[0] ? s_override_face
-                     : (s_notice_ms > 0 ? NOTICE_FACE : (s_sleeping ? SLEEP_FACE : s_base_face));
+                     : (s_notice_ms > 0 ? NOTICE_FACE : (s_sleeping ? SLEEP_FACE : (s_music_face ? MUSIC_FACE : s_base_face)));
     strcpy(s_state->face, face);
     strcpy(s_state->corner, s_override_corner[0] ? s_override_corner : s_base_corner);
     s_state->sleeping = s_sleeping;
@@ -568,6 +571,28 @@ static void ke_arrived(void)
     app_on_new_message();
 }
 
+void ui_set_music(const music_info_t *info, const char (*names)[UI_MUSIC_TITLE])
+{
+    lock();
+    s_state->music = *info;
+    s_state->music_names = names;
+    int max = ui_music_list_max_scroll(s_state);
+    if (s_state->music_scroll > max) s_state->music_scroll = max;
+    unlock();
+    mark_dirty();
+}
+
+void ui_set_music_playing(bool playing)
+{
+    lock();
+    if (s_music_face != playing) {
+        s_music_face = playing;
+        recompute();
+    }
+    unlock();
+    mark_dirty();
+}
+
 void ui_ke_picture(int pic_id)
 {
     lock();
@@ -914,6 +939,7 @@ static void set_pressed(int id)
 /* ---- handwriting ------------------------------------------------------------------------------------- */
 
 static bool s_ink_stroke;          /* a finger is drawing on the pad */
+static bool s_vol_drag;            /* a finger is on the music volume slider */
 
 void ui_ink_open(void)
 {
@@ -954,6 +980,11 @@ static bool handle_tap_in_ui(int hit)
 {
     switch (hit) {
     case UI_HIT_VIEW_EXIT: ui_set_screen(UI_SCREEN_CHAT); return true;
+    case UI_HIT_MUSIC_BACK: ui_set_screen(UI_SCREEN_CHAT); return true;
+    case UI_HIT_MUSIC_LIST: ui_set_screen(UI_SCREEN_MUSIC_LIST); return true;
+    case UI_HIT_MUSIC_LIST_BACK: ui_set_screen(UI_SCREEN_MUSIC); return true;
+    case UI_HIT_MUSIC_LIST_BG: return true;
+    case UI_HIT_MUSIC_VOL: return true;
     case UI_HIT_INK_OPEN:  ui_ink_open(); return true;
     case UI_HIT_INK_BACK:  ui_set_screen(UI_SCREEN_CHAT); return true;
     case UI_HIT_INK_PAD:   return true;
@@ -984,9 +1015,17 @@ static bool in_chat_area(int hit) { return hit == UI_HIT_CHAT || (hit >= UI_HIT_
 
 static bool is_pressable(int hit)
 {
-    return (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_MUSIC_ROW0) || hit == UI_HIT_CAM_BTN || hit == UI_HIT_CAM_GALLERY || hit == UI_HIT_CAM_BACK ||
-           hit == UI_HIT_GAL_DELETE || hit == UI_HIT_GAL_SEND || hit == UI_HIT_HINT || hit == UI_HIT_TOP_BACK ||
-           hit == UI_HIT_PLUS || (hit >= UI_HIT_INK_OPEN && hit <= UI_HIT_INK_SEND && hit != UI_HIT_INK_PAD);
+    if (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_MUSIC_ROW0) return true;
+    switch (hit) {
+    case UI_HIT_CAM_BTN: case UI_HIT_CAM_GALLERY: case UI_HIT_CAM_BACK: case UI_HIT_GAL_DELETE: case UI_HIT_GAL_SEND:
+    case UI_HIT_HINT: case UI_HIT_TOP_BACK: case UI_HIT_PLUS:
+    case UI_HIT_INK_OPEN: case UI_HIT_INK_BACK: case UI_HIT_INK_NEXT: case UI_HIT_INK_UNDO: case UI_HIT_INK_CLEAR: case UI_HIT_INK_SEND:
+    case UI_HIT_MUSIC_OPEN: case UI_HIT_GAME_OPEN: case UI_HIT_MUSIC_BACK: case UI_HIT_MUSIC_LIST: case UI_HIT_MUSIC_PREV:
+    case UI_HIT_MUSIC_PLAY: case UI_HIT_MUSIC_NEXT: case UI_HIT_MUSIC_LIST_BACK:
+        return true;
+    default:
+        return false;
+    }
 }
 
 static void handle_swipe(bool vertical, int total_dx, int total_dy)
@@ -1063,12 +1102,27 @@ void ui_touch(bool down, int x, int y)
             TLOG("down (%d,%d) hit=%d%s drag>%dpx", x, y, s_hit, edge ? " edge" : "", s_drag_px);
         }
         app_on_touch_activity();
+        if (s_hit == UI_HIT_MUSIC_VOL) {                           /* the volume slider follows the finger from the first touch */
+            s_vol_drag = true;
+            app_set_volume(ui_music_vol_from_x(x));
+        }
         if (s_hit == UI_HIT_INK_PAD && s_ink) {                    /* start of a stroke */
             int nx, ny;
             ink_norm(x, y, &nx, &ny);
             s_ink_stroke = ink_pen_down(s_ink, nx, ny);
             mark_ink_dirty();
         }
+        return;
+    }
+    if (down && s_down && s_vol_drag) {
+        s_last_x = x;
+        s_last_y = y;
+        app_set_volume(ui_music_vol_from_x(x));
+        return;
+    }
+    if (!down && s_down && s_vol_drag) {
+        s_down = false;
+        s_vol_drag = false;
         return;
     }
     if (down && s_down && s_ink_stroke) {                          /* the pen follows the finger */
@@ -1109,6 +1163,14 @@ void ui_touch(bool down, int x, int y)
                 unlock();
                 mark_dirty();
             }
+        }
+        if (s_dragging && s_axis_v && (s_hit == UI_HIT_MUSIC_LIST_BG || s_hit >= UI_HIT_MUSIC_ROW0) && s_hit < UI_HIT_PIC0) {
+            /* the song list follows the finger */
+            lock();
+            int v = s_state->music_scroll - (y - s_last_y), max = ui_music_list_max_scroll(s_state);
+            s_state->music_scroll = v < 0 ? 0 : (v > max ? max : v);
+            unlock();
+            mark_dirty();
         }
         if (s_dragging && s_axis_v && in_chat_area(s_hit)) {
             /* content follows the finger: dragging down reveals older messages */

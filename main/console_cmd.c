@@ -11,6 +11,7 @@
 #include "cam_ui.h"
 #include "camera.h"
 #include "storage.h"
+#include "music.h"
 #include "lineedit.h"
 #include "gfx.h"
 
@@ -214,6 +215,23 @@ static int cmd_colortest(int argc, char **argv)
     ui_set_screen(UI_SCREEN_COLORTEST);
     printf("colour test pattern on screen; tap to leave\n");
     return 0;
+}
+
+static int cmd_music(int argc, char **argv)
+{
+    if (argc == 1 || (argc == 2 && !strcmp(argv[1], "list"))) {
+        printf("%d song(s), %s\n", music_count(), music_is_playing() ? "playing" : (music_is_paused() ? "paused" : "stopped"));
+        for (int i = 0; i < music_count(); i++) printf("  %c %2d  %s\n", i == music_current() ? '>' : ' ', i, music_title(i));
+        return 0;
+    }
+    if (!strcmp(argv[1], "rescan")) { storage_rescan(); music_rescan(); printf("%d song(s)\n", music_count()); return 0; }
+    if (!strcmp(argv[1], "play") && argc == 3) { printf(music_play(atoi(argv[2])) ? "ok\n" : "no such song\n"); return 0; }
+    if (!strcmp(argv[1], "pause") || !strcmp(argv[1], "toggle")) { music_toggle(); return 0; }
+    if (!strcmp(argv[1], "next")) { music_next(); return 0; }
+    if (!strcmp(argv[1], "prev")) { music_prev(); return 0; }
+    if (!strcmp(argv[1], "stop")) { music_stop(); return 0; }
+    printf("usage: music [list] | play <n> | pause | next | prev | stop | rescan\n");
+    return 1;
 }
 
 static int cmd_buttons(int argc, char **argv)
@@ -552,6 +570,7 @@ esp_err_t console_cmd_start(void)
         { .command = "colortest", .help = "show swatches with their #RRGGBB to compare with a phone", .func = cmd_colortest },
         { .command = "touchrange", .help = "touchrange [reset]  smallest / largest raw touch values seen (dead panel edges?)", .func = cmd_touchrange },
         { .command = "touchcal", .help = "touchcal [xmin xmax ymin ymax | reset]  stretch the panel's real touch area to the screen (saved)", .func = cmd_touchcal },
+        { .command = "music",    .help = "music [list|play <n>|pause|next|prev|stop|rescan]  the MP3 player (files in /sdcard/MUSIC)", .func = cmd_music },
         { .command = "buttons",  .help = "buttons [reset]  show the quick-button config JSON / restore defaults", .func = cmd_buttons },
         { .command = "anim",     .help = "anim [blink|blush|zzz|shake|flash] on|off  (no name = all; saved)", .func = cmd_anim },
         { .command = "chime",    .help = "chime on|off  soft tone on new message (saved)", .func = cmd_chime },

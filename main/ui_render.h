@@ -38,9 +38,20 @@ typedef struct {
     uint16_t pic_id;          /* 0 = none; else a picture from Ke, its thumbnail in the picture pool (see pics_get) */
 } chat_msg_t;
 
-typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK, UI_SCREEN_VIEWER } ui_screen_t;
+typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK, UI_SCREEN_VIEWER, UI_SCREEN_MUSIC, UI_SCREEN_MUSIC_LIST } ui_screen_t;
 
 typedef struct { char text[UI_BTN_TEXT_LEN]; } ui_button_t;
+
+#define UI_MUSIC_TITLE 64
+/* what the music player page shows (filled by music.c through ui_set_music) */
+typedef struct {
+    int count, current;        /* songs in the list; the loaded one (-1 = none) */
+    bool playing, paused;
+    int elapsed_s, total_s;    /* total_s 0 = not known yet */
+    int progress_pm;           /* 0..1000 */
+    int volume;                /* 0..100 */
+    char title[UI_MUSIC_TITLE];
+} music_info_t;
 
 typedef struct {
     /* face (shared by the face page and the chat top bar) */
@@ -79,6 +90,9 @@ typedef struct {
     /* camera / gallery screens */
     const uint16_t *frame;    /* byte-swapped RGB565 image to show (preview or photo), or NULL */
     int frame_w, frame_h;
+    music_info_t music;
+    const char (*music_names)[UI_MUSIC_TITLE];   /* song titles for the list page (owned by music.c) */
+    int music_scroll;         /* list page: pixels scrolled */
     int ink_scroll;           /* characters the strip is scrolled back from the newest (0 = follow the newest) */
     const ink_t *ink;         /* handwriting page: the strokes (owned by ui.c, read by the renderer) */
     int dot_x, dot_y, dot_ms; /* touch marker (touchlog on): where, and how much longer it stays */
@@ -112,6 +126,16 @@ enum {
     UI_HIT_INK_CLEAR,      /* 清空 */
     UI_HIT_INK_SEND,       /* 寄 */
     UI_HIT_INK_STRIP,      /* handwriting page: the strip of finished characters (drag sideways to scroll) */
+    UI_HIT_MUSIC_OPEN,     /* the 音乐 capsule in the + panel */
+    UI_HIT_GAME_OPEN,      /* the 游戏 capsule in the + panel */
+    UI_HIT_MUSIC_BACK,     /* player: back to the chat */
+    UI_HIT_MUSIC_LIST,     /* player: the song list button */
+    UI_HIT_MUSIC_PREV,
+    UI_HIT_MUSIC_PLAY,     /* play / pause */
+    UI_HIT_MUSIC_NEXT,
+    UI_HIT_MUSIC_VOL,      /* volume slider (drag) */
+    UI_HIT_MUSIC_LIST_BACK,/* list: back to the player */
+    UI_HIT_MUSIC_LIST_BG,  /* list: empty space between rows (drag scrolls) */
     UI_HIT_VIEW_EXIT,      /* picture viewer: tap anywhere to go back */
     UI_HIT_TEST_EXIT,      /* colour test pattern: tap anywhere to leave */
     UI_HIT_PANEL,          /* open panel: empty part (also the panel while it is still sliding) */
@@ -142,6 +166,10 @@ bool ui_render_ink_incremental(const ui_state_t *s, int from, int to, int *x0, i
 
 /* The largest picture that fits a chat bubble in the current orientation (for POST /ink and /image thumbnails). */
 void ui_chat_picture_box(int *w, int *h);
+
+/* Music player page geometry: volume from a touch x (0..100), and list scrolling limits. */
+int ui_music_vol_from_x(int x);
+int ui_music_list_max_scroll(const ui_state_t *s);
 
 /* Strip of finished characters: how many are visible at once and how wide each is (for scrolling). */
 int ui_ink_strip_cap(void);

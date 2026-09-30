@@ -73,6 +73,10 @@ void ui_set_frame(const uint16_t *frame, int w, int h);   /* image shown on came
 void ui_set_cam_text(const char *utf8);
 void ui_set_gallery_pos(int index, int count);
 
+/* music player: music.c tells the UI what to show; the list page shows `names` (kept by the caller) */
+void ui_set_music(const music_info_t *info, const char (*names)[UI_MUSIC_TITLE]);
+void ui_set_music_playing(bool playing);       /* the face hums (—ω—)♪ while a song plays */
+
 /* handwriting page (the strokes are kept while you go back to the chat) */
 void ui_ink_open(void);
 

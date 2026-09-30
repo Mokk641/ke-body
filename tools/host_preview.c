@@ -35,7 +35,8 @@ int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: %s out.ppm [options]\n", argv[0]); return 1; }
     bool land = true, few = false, thumb_msg = false;
-    int ink_chars = 0;
+    int ink_chars = 0, songs = 0;
+    bool playing = false;
     ui_state_t *s = calloc(1, sizeof(ui_state_t));
     s->pressed = UI_HIT_NONE;
     s->theme = UI_THEME_DARK;
@@ -52,7 +53,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--light")) s->theme = UI_THEME_LIGHT;
         else if (!strcmp(a, "--page")) {
             const char *v = ARG;
-            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : !strcmp(v, "ink") ? UI_SCREEN_INK : UI_SCREEN_FACE;
+            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : !strcmp(v, "ink") ? UI_SCREEN_INK : !strcmp(v, "music") ? UI_SCREEN_MUSIC : !strcmp(v, "musiclist") ? UI_SCREEN_MUSIC_LIST : UI_SCREEN_FACE;
         }
         else if (!strcmp(a, "--slide")) s->page_pos = atoi(ARG);
         else if (!strcmp(a, "--panel")) { s->panel_pos = atoi(ARG); s->panel_open = s->panel_pos > 0; }
@@ -71,6 +72,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--scroll")) s->scroll = atoi(ARG);
         else if (!strcmp(a, "--few")) few = true;
         else if (!strcmp(a, "--sending")) s->sending = true;
+        else if (!strcmp(a, "--songs")) songs = atoi(ARG);
+        else if (!strcmp(a, "--playing")) playing = true;
         else if (!strcmp(a, "--ink")) ink_chars = atoi(ARG);
         else if (!strcmp(a, "--thumb")) thumb_msg = true;
         else if (!strcmp(a, "--review")) s->review = true;
@@ -129,6 +132,14 @@ int main(int argc, char **argv)
         chat_msg_t *m = &s->msgs[s->msg_count++];
         m->who = CHAT_HER; snprintf(m->text, sizeof m->text, "[手写]"); m->ink_id = (uint16_t)slot;
     }
+    static char names[100][UI_MUSIC_TITLE];
+    for (int i = 0; i < songs && i < 100; i++) snprintf(names[i], sizeof names[i], "%s", i == 0 ? "夜曲 - 周杰伦" : i == 1 ? "Take Me Home, Country Roads" : i == 2 ? "小幸运" : "第 N 首歌");
+    s->music.count = songs;
+    s->music.current = playing ? 0 : -1;
+    s->music.playing = playing;
+    s->music.elapsed_s = 83; s->music.total_s = 226; s->music.progress_pm = 366; s->music.volume = 18;
+    snprintf(s->music.title, sizeof s->music.title, "%s", names[0]);
+    s->music_names = names;
     ui_render(s);
 
     FILE *o = fopen(argv[1], "wb");

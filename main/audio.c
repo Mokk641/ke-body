@@ -44,7 +44,7 @@ static const char *TAG = "audio";
 #define WAV_HDR          44
 #define REC_MAX_SAMPLES  (AUDIO_REC_RATE * AUDIO_REC_MAX_SECONDS)
 
-typedef enum { CMD_REC, CMD_PLAY, CMD_MICTEST } cmd_type_t;
+typedef enum { CMD_REC, CMD_PLAY, CMD_MICTEST, CMD_STREAM } cmd_type_t;
 typedef struct { cmd_type_t type; uint8_t *buf; size_t len; } cmd_t;
 
 static i2s_chan_handle_t s_tx, s_rx;
@@ -60,6 +60,7 @@ static int16_t *s_chunk;
 static int16_t *s_rxchunk;
 static int s_volume = AUDIO_DEFAULT_VOLUME;
 static bool s_mono;          /* I2S slot mode: false = stereo (official), true = mono/left */
+static volatile bool s_streaming, s_stream_stop, s_stream_pause;
 static bool s_probe;         /* test tone: capture RX while playing and report peaks */
 
 static inline int frame_bytes(void) { return s_mono ? 2 : 4; }
@@ -330,6 +331,39 @@ static void do_play(uint8_t *wav, size_t len)
     if (s_cb) s_cb(AUDIO_EVT_PLAY_DONE, NULL, 0);
 }
 
+#define STREAM_MAX_FRAMES 1152
+
+static void do_stream(audio_stream_t *st)
+{
+    int16_t *pcm = malloc(STREAM_MAX_FRAMES * 2 * sizeof(int16_t));
+    bool finished = false;
+    if (!pcm) { if (st->done) st->done(st->ctx, false); return; }
+    s_streaming = true;
+    s_stream_stop = false;
+    board_amp_enable(true);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    for (;;) {
+        if (uxQueueMessagesWaiting(s_q) > 0) break;             /* recording, a WAV or a new stream takes over */
+        if (s_stream_stop) break;
+        if (s_stream_pause) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+        int rate = 0;
+        int frames = st->read(st->ctx, pcm, STREAM_MAX_FRAMES, &rate);
+        if (frames <= 0) { finished = true; break; }
+        if (rate > 0 && set_rate(rate) != ESP_OK) break;
+        if (s_mono) {
+            for (int i = 0; i < frames; i++) pcm[i] = (int16_t)(((int)pcm[2 * i] + (int)pcm[2 * i + 1]) / 2);
+        }
+        size_t written = 0;
+        if (i2s_channel_write(s_tx, pcm, (size_t)frames * frame_bytes(), &written, pdMS_TO_TICKS(1000)) != ESP_OK) break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(60));                             /* let the DMA drain */
+    board_amp_enable(false);
+    s_streaming = false;
+    s_stream_pause = false;
+    free(pcm);
+    if (st->done) st->done(st->ctx, finished);
+}
+
 static void do_mictest(int ms)
 {
     if (set_rate(AUDIO_REC_RATE) != ESP_OK) return;
@@ -381,6 +415,10 @@ static void audio_task(void *arg)
         case CMD_MICTEST:
             do_mictest((int)c.len);
             break;
+        case CMD_STREAM:
+            do_stream((audio_stream_t *)c.buf);
+            free(c.buf);
+            break;
         }
     }
 }
@@ -397,7 +435,7 @@ esp_err_t audio_init(i2c_master_bus_handle_t bus, audio_cb_t cb)
     ESP_RETURN_ON_ERROR(i2s_init(), TAG, "i2s");
     ESP_RETURN_ON_ERROR(codec_init(bus), TAG, "codec");
     s_q = xQueueCreate(4, sizeof(cmd_t));
-    xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 6, NULL, 0);
+    xTaskCreatePinnedToCore(audio_task, "audio", 20480, NULL, 6, NULL, 0);     /* big: it also runs the MP3 decoder */
     s_ready = true;
     ESP_LOGI(TAG, "ready (volume %d)", s_volume);
     return ESP_OK;
@@ -418,6 +456,22 @@ void audio_record_stop(void)
 {
     s_stop_rec = true;
 }
+
+esp_err_t audio_stream_start(const audio_stream_t *s)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    audio_stream_t *copy = malloc(sizeof *copy);
+    if (!copy) return ESP_ERR_NO_MEM;
+    *copy = *s;
+    s_stream_pause = false;
+    cmd_t c = { .type = CMD_STREAM, .buf = (uint8_t *)copy };
+    if (xQueueSend(s_q, &c, 0) != pdTRUE) { free(copy); return ESP_ERR_NO_MEM; }
+    return ESP_OK;
+}
+
+void audio_stream_stop(void) { if (s_streaming) s_stream_stop = true; }
+void audio_stream_pause(bool pause) { s_stream_pause = pause; }
+bool audio_stream_active(void) { return s_streaming; }
 
 esp_err_t audio_play_wav(uint8_t *wav, size_t len)
 {

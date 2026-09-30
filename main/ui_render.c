@@ -75,8 +75,13 @@ int ui_emoji_pages(const ui_state_t *s)
 }
 
 /* The capsules in the panel: the configured phrases, then a fixed 手写 (handwriting) one. */
-static int phrase_count(const ui_state_t *s) { return s->text_btn_n + 1; }
-static const char *phrase_label(const ui_state_t *s, int i) { return i < s->text_btn_n ? s->text_btn[i].text : "手写"; }
+static const struct { const char *label; int hit; } FIXED_CAPS[] = {
+    { "手写", UI_HIT_INK_OPEN }, { "音乐", UI_HIT_MUSIC_OPEN }, { "游戏", UI_HIT_GAME_OPEN },
+};
+#define NFIXED_CAPS ((int)(sizeof FIXED_CAPS / sizeof FIXED_CAPS[0]))
+static int phrase_count(const ui_state_t *s) { return s->text_btn_n + NFIXED_CAPS; }
+static const char *phrase_label(const ui_state_t *s, int i) { return i < s->text_btn_n ? s->text_btn[i].text : FIXED_CAPS[i - s->text_btn_n].label; }
+static int phrase_hit(const ui_state_t *s, int i) { return i < s->text_btn_n ? UI_HIT_TEXT_BTN0 + i : FIXED_CAPS[i - s->text_btn_n].hit; }
 
 /* Where quick-phrase capsule idx sits: x, row (0/1), width. false if it does not fit in two rows. */
 static bool phrase_pos(const ui_state_t *s, int W, int idx, int *x, int *row, int *w)
@@ -84,11 +89,11 @@ static bool phrase_pos(const ui_state_t *s, int W, int idx, int *x, int *row, in
     const kb_font_t *f = &kb_font_text22;
     int cx = MARGIN, r = 0;
     for (int i = 0; i <= idx && i < phrase_count(s); i++) {
-        int cw = gfx_text_width(f, phrase_label(s, i)) + 28;
+        int cw = gfx_text_width(f, phrase_label(s, i)) + (i < s->text_btn_n ? 28 : 20);
         if (cw < 56) cw = 56;
         if (cw > W - 2 * MARGIN) cw = W - 2 * MARGIN;
         if (cx > MARGIN && cx + cw > W - MARGIN) { r++; cx = MARGIN; }
-        if (r >= 2) return false;
+        if (r >= 3) return false;
         if (i == idx) { *x = cx; *row = r; *w = cw; return true; }
         cx += cw + CAP_GAP;
     }
@@ -526,9 +531,9 @@ static void draw_panel(const palette_t *p, const ui_state_t *s, const geo_t *g)
         int x, row, w;
         if (!phrase_pos(s, g->W, i, &x, &row, &w)) continue;
         int y = py + 8 + row * (CAP_H + CAP_GAP);
-        const bool ink_cap = i == s->text_btn_n;                     /* handwriting is not a send button: never greyed */
-        const bool dis = s->sending && !ink_cap;
-        const int hit = ink_cap ? UI_HIT_INK_OPEN : UI_HIT_TEXT_BTN0 + i;
+        const bool fixed_cap = i >= s->text_btn_n;                   /* handwriting / music / games are not send buttons: never greyed */
+        const bool dis = s->sending && !fixed_cap;
+        const int hit = phrase_hit(s, i);
         gfx_fill_round_rect(x, y, w, CAP_H, CAP_H / 2, s->pressed == hit && !dis ? p->pressed : p->cap);
         const char *label = phrase_label(s, i);
         int inner = w - 16, len = gfx_fit_len(tf, label, inner);
@@ -854,6 +859,176 @@ static void draw_ink_screen(const palette_t *p, const ui_state_t *s, const geo_t
     draw_ink_button(p, L.bx[3], L.by[3], L.bw, L.bh, "寄", s->pressed == UI_HIT_INK_SEND, s->sending, true);
 }
 
+/* ---- music player pages --------------------------------------------------------------------------------- */
+
+typedef struct {
+    int back_x, back_y, back_w, back_h;
+    int list_x, list_y, list_w, list_h;
+    int art_cx, art_cy, art_r;
+    int title_x, title_y, title_w;
+    int bar_x, bar_y, bar_w;
+    int ctl_y, prev_cx, play_cx, next_cx;
+    int vol_x, vol_y, vol_w, icon_x;
+} music_geo_t;
+
+#define ROW_H 46
+#define LIST_TOP 56
+
+static void music_layout(int W, int H, music_geo_t *M)
+{
+    M->back_x = 0; M->back_y = 0; M->back_w = 56; M->back_h = 52;
+    M->list_w = 66; M->list_h = 32; M->list_x = W - 76; M->list_y = 10;
+    if (W < H) {                                          /* portrait: everything in one column */
+        M->art_cx = W / 2; M->art_cy = 124; M->art_r = 76;
+        M->title_x = 20; M->title_w = W - 40; M->title_y = 222;
+        M->bar_x = 28; M->bar_w = W - 56; M->bar_y = 282;
+        M->ctl_y = 356;
+        M->prev_cx = W / 2 - 96; M->play_cx = W / 2; M->next_cx = W / 2 + 96;
+        M->icon_x = 28; M->vol_x = 60; M->vol_w = W - 92; M->vol_y = 428;
+    } else {                                              /* landscape: the picture on the left, controls on the right */
+        int x0 = 224, w = W - x0 - 24;
+        M->art_cx = 108; M->art_cy = 176; M->art_r = 82;
+        M->title_x = x0; M->title_w = w; M->title_y = 66;
+        M->bar_x = x0; M->bar_w = w; M->bar_y = 132;
+        M->ctl_y = 206;
+        M->prev_cx = x0 + 34; M->play_cx = x0 + w / 2; M->next_cx = x0 + w - 34;
+        M->icon_x = x0; M->vol_x = x0 + 32; M->vol_w = w - 32; M->vol_y = 272;
+    }
+}
+
+int ui_music_vol_from_x(int x)
+{
+    music_geo_t M;
+    music_layout(gfx_width(), gfx_height(), &M);
+    int v = (x - M.vol_x) * 100 / M.vol_w;
+    return v < 0 ? 0 : (v > 100 ? 100 : v);
+}
+
+int ui_music_list_max_scroll(const ui_state_t *s)
+{
+    int max = s->music.count * ROW_H - (gfx_height() - LIST_TOP);
+    return max > 0 ? max : 0;
+}
+
+static void fmt_time(char *out, size_t n, int sec)
+{
+    if (sec < 0) snprintf(out, n, "--:--");
+    else snprintf(out, n, "%d:%02d", sec / 60, sec % 60);
+}
+
+/* title in the middle, cut with an ellipsis if it is too wide */
+static void draw_fit_text(const kb_font_t *f, int cx, int baseline, const char *text, int max_w, uint16_t color)
+{
+    int len = (int)strlen(text);
+    if (gfx_text_width(f, text) <= max_w) { gfx_draw_text_centered(f, cx, baseline, text, color); return; }
+    int fit = gfx_fit_len(f, text, max_w - gfx_text_width(f, "…"));
+    char buf[UI_MUSIC_TITLE + 8];
+    if (fit > (int)sizeof buf - 5) fit = (int)sizeof buf - 5;
+    memcpy(buf, text, (size_t)fit);
+    strcpy(buf + fit, "…");
+    (void)len;
+    gfx_draw_text_centered(f, cx, baseline, buf, color);
+}
+
+static void draw_music_player(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    music_geo_t M;
+    music_layout(g->W, g->H, &M);
+    const music_info_t *m = &s->music;
+
+    uint16_t bc = s->pressed == UI_HIT_MUSIC_BACK ? p->icon_pressed : p->icon;
+    float bcx = 22.f, bcy = 26.f;
+    gfx_line(bcx + 4.f, bcy - 8.f, bcx - 4.f, bcy, 2.f, bc);
+    gfx_line(bcx - 4.f, bcy, bcx + 4.f, bcy + 8.f, 2.f, bc);
+    gfx_fill_round_rect(M.list_x, M.list_y, M.list_w, M.list_h, M.list_h / 2, s->pressed == UI_HIT_MUSIC_LIST ? p->pressed : p->cap);
+    gfx_draw_text_centered(&kb_font_text22, M.list_x + M.list_w / 2, M.list_y + (M.list_h - kb_font_text22.line_height) / 2 + kb_font_text22.ascent, "列表", p->cap_txt);
+
+    /* the "cover": a round plate with a note in it, ringed in pink while playing */
+    gfx_fill_circle(M.art_cx, M.art_cy, M.art_r, p->cell);
+    if (m->playing) gfx_ring((float)M.art_cx, (float)M.art_cy, (float)M.art_r - 1.f, 3.f, p->her_bub);
+    {
+        const kb_font_t *nf = &kb_font_face96;
+        gfx_draw_text_centered(nf, M.art_cx, face_baseline(nf, M.art_cy) - 4, "♪", m->playing ? p->her_bub : p->icon);
+    }
+
+    const bool loaded = m->current >= 0;
+    if (m->count == 0) {
+        draw_fit_text(&kb_font_text22, M.title_x + M.title_w / 2, M.title_y + kb_font_text22.ascent, "还没有歌", M.title_w, p->cap_txt);
+        draw_fit_text(&kb_font_small14, M.title_x + M.title_w / 2, M.title_y + 40, "SD 卡的 MUSIC 文件夹放 MP3，或在电脑上 ke_send.py music", M.title_w, p->dim);
+    } else {
+        draw_fit_text(&kb_font_text22, M.title_x + M.title_w / 2, M.title_y + kb_font_text22.ascent,
+                      loaded ? m->title : "点播放键开始", M.title_w, loaded ? p->cap_txt : p->dim);
+    }
+
+    /* progress */
+    gfx_fill_round_rect(M.bar_x, M.bar_y, M.bar_w, 5, 2, p->sep);
+    int fill = loaded ? M.bar_w * m->progress_pm / 1000 : 0;
+    if (fill > 0) gfx_fill_round_rect(M.bar_x, M.bar_y, fill < 5 ? 5 : fill, 5, 2, p->her_bub);
+    if (loaded) gfx_fill_circle(M.bar_x + fill, M.bar_y + 2, 6, p->cap_txt);
+    char t1[16], t2[16];
+    fmt_time(t1, sizeof t1, loaded ? m->elapsed_s : 0);
+    fmt_time(t2, sizeof t2, loaded && m->total_s > 0 ? m->total_s : -1);
+    gfx_draw_text(&kb_font_small14, M.bar_x, M.bar_y + 26, t1, p->dim);
+    gfx_draw_text(&kb_font_small14, M.bar_x + M.bar_w - gfx_text_width(&kb_font_small14, t2), M.bar_y + 26, t2, p->dim);
+
+    /* previous / play-pause / next, drawn as shapes */
+    const int cy = M.ctl_y;
+    uint16_t pc = s->pressed == UI_HIT_MUSIC_PREV ? p->icon_pressed : p->cap_txt;
+    uint16_t nc = s->pressed == UI_HIT_MUSIC_NEXT ? p->icon_pressed : p->cap_txt;
+    gfx_fill_rect(M.prev_cx - 13, cy - 11, 3, 22, pc);
+    gfx_fill_triangle((float)M.prev_cx + 12.f, (float)cy - 12.f, (float)M.prev_cx + 12.f, (float)cy + 12.f, (float)M.prev_cx - 9.f, (float)cy, pc);
+    gfx_fill_rect(M.next_cx + 10, cy - 11, 3, 22, nc);
+    gfx_fill_triangle((float)M.next_cx - 12.f, (float)cy - 12.f, (float)M.next_cx - 12.f, (float)cy + 12.f, (float)M.next_cx + 9.f, (float)cy, nc);
+    gfx_fill_circle(M.play_cx, cy, 30, s->pressed == UI_HIT_MUSIC_PLAY ? p->pressed : p->cell);
+    if (m->playing) {
+        gfx_fill_round_rect(M.play_cx - 11, cy - 13, 7, 26, 2, p->cap_txt);
+        gfx_fill_round_rect(M.play_cx + 4, cy - 13, 7, 26, 2, p->cap_txt);
+    } else {
+        gfx_fill_triangle((float)M.play_cx - 9.f, (float)cy - 14.f, (float)M.play_cx - 9.f, (float)cy + 14.f, (float)M.play_cx + 15.f, (float)cy, p->cap_txt);
+    }
+
+    /* volume: a little speaker, a slider */
+    const int vy = M.vol_y;
+    gfx_fill_rect(M.icon_x, vy - 4, 6, 8, p->icon);
+    gfx_fill_triangle((float)M.icon_x + 6.f, (float)vy - 4.f, (float)M.icon_x + 6.f, (float)vy + 4.f, (float)M.icon_x + 15.f, (float)vy + 10.f, p->icon);
+    gfx_fill_triangle((float)M.icon_x + 6.f, (float)vy - 4.f, (float)M.icon_x + 15.f, (float)vy - 10.f, (float)M.icon_x + 15.f, (float)vy + 10.f, p->icon);
+    gfx_fill_round_rect(M.vol_x, vy - 2, M.vol_w, 5, 2, p->sep);
+    int vf = M.vol_w * m->volume / 100;
+    if (vf > 0) gfx_fill_round_rect(M.vol_x, vy - 2, vf < 5 ? 5 : vf, 5, 2, p->icon);
+    gfx_fill_circle(M.vol_x + vf, vy, 8, p->cap_txt);
+}
+
+static void draw_music_list(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    const music_info_t *m = &s->music;
+    gfx_set_clip(0, LIST_TOP, g->W, g->H - LIST_TOP);
+    if (m->count == 0 || !s->music_names) {
+        gfx_draw_text_centered(&kb_font_text22, g->W / 2, g->H / 2, "还没有歌", p->dim);
+    } else {
+        for (int i = 0; i < m->count; i++) {
+            int y = LIST_TOP + i * ROW_H - s->music_scroll;
+            if (y + ROW_H < LIST_TOP || y > g->H) continue;
+            const bool cur = i == m->current;
+            const kb_font_t *f = &kb_font_text22;
+            if (cur) gfx_fill_triangle(18.f, (float)y + ROW_H / 2 - 8.f, 18.f, (float)y + ROW_H / 2 + 8.f, 32.f, (float)y + ROW_H / 2, p->her_bub);
+            char buf[UI_MUSIC_TITLE + 8];
+            const char *t = s->music_names[i];
+            int max_w = g->W - 56 - 14;
+            int len = gfx_fit_len(f, t, max_w);
+            snprintf(buf, sizeof buf, "%.*s", len, t);
+            gfx_draw_text(f, 44, y + (ROW_H - f->line_height) / 2 + f->ascent, buf, cur ? p->her_bub : p->cap_txt);
+            gfx_fill_rect(44, y + ROW_H - 1, g->W - 44, 1, p->sep);
+        }
+    }
+    gfx_clear_clip();
+    uint16_t bc = s->pressed == UI_HIT_MUSIC_LIST_BACK ? p->icon_pressed : p->icon;
+    gfx_fill_rect(0, 0, g->W, LIST_TOP - 1, p->bg);
+    gfx_line(22.f + 4.f, 18.f, 22.f - 4.f, 26.f, 2.f, bc);
+    gfx_line(22.f - 4.f, 26.f, 22.f + 4.f, 34.f, 2.f, bc);
+    gfx_draw_text_centered(&kb_font_text22, g->W / 2, 26 + kb_font_text22.ascent / 2, "音乐", p->cap_txt);
+    gfx_fill_rect(0, LIST_TOP - 1, g->W, 1, p->sep);
+}
+
 /* ---- colour test pattern: swatches with their #RRGGBB, to compare with a phone ----------------------------- */
 
 static void draw_colortest(const ui_state_t *s, const geo_t *g)
@@ -914,7 +1089,11 @@ void ui_render(const ui_state_t *s)
     gfx_clear_clip();
     gfx_fill(p->bg);
 
-    if (s->screen == UI_SCREEN_VIEWER) {
+    if (s->screen == UI_SCREEN_MUSIC) {
+        draw_music_player(p, s, &g);
+    } else if (s->screen == UI_SCREEN_MUSIC_LIST) {
+        draw_music_list(p, s, &g);
+    } else if (s->screen == UI_SCREEN_VIEWER) {
         draw_frame_fit(s, &g, g.H);
         if (!s->frame) gfx_draw_text_centered(&kb_font_text22, g.W / 2, g.H / 2, "图片没有了", p->dim);
     } else if (s->screen == UI_SCREEN_INK) {
@@ -984,6 +1163,24 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
     if (s->screen == UI_SCREEN_COLORTEST) return UI_HIT_TEST_EXIT;
     if (s->screen == UI_SCREEN_VIEWER) return UI_HIT_VIEW_EXIT;
 
+    if (s->screen == UI_SCREEN_MUSIC) {
+        music_geo_t M;
+        music_layout(g.W, g.H, &M);
+        if (in_rect(px, py, M.back_x, M.back_y, M.back_w, M.back_h)) return UI_HIT_MUSIC_BACK;
+        if (in_rect(px, py, M.list_x - 8, M.list_y - 6, M.list_w + 16, M.list_h + 12)) return UI_HIT_MUSIC_LIST;
+        if (in_rect(px, py, M.prev_cx - 34, M.ctl_y - 34, 68, 68)) return UI_HIT_MUSIC_PREV;
+        if (in_rect(px, py, M.play_cx - 40, M.ctl_y - 40, 80, 80)) return UI_HIT_MUSIC_PLAY;
+        if (in_rect(px, py, M.next_cx - 34, M.ctl_y - 34, 68, 68)) return UI_HIT_MUSIC_NEXT;
+        if (in_rect(px, py, M.vol_x - 12, M.vol_y - 22, M.vol_w + 24, 44)) return UI_HIT_MUSIC_VOL;
+        return UI_HIT_NONE;
+    }
+    if (s->screen == UI_SCREEN_MUSIC_LIST) {
+        if (py < LIST_TOP) return px < 60 ? UI_HIT_MUSIC_LIST_BACK : UI_HIT_NONE;
+        int i = (py - LIST_TOP + s->music_scroll) / ROW_H;
+        if (i >= 0 && i < s->music.count) return UI_HIT_MUSIC_ROW0 + i;
+        return UI_HIT_MUSIC_LIST_BG;
+    }
+
     if (s->screen == UI_SCREEN_INK) {
         ink_geo_t L;
         ink_layout(g.W, g.H, &L);
@@ -1014,7 +1211,7 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
             int cx, row, cw;
             if (!phrase_pos(s, g.W, i, &cx, &row, &cw)) continue;
             int cyy = g.bar_y - g.panel_h + 8 + row * (CAP_H + CAP_GAP);
-            if (in_rect(px, py, cx, cyy, cw, CAP_H)) return i == s->text_btn_n ? UI_HIT_INK_OPEN : UI_HIT_TEXT_BTN0 + i;
+            if (in_rect(px, py, cx, cyy, cw, CAP_H)) return phrase_hit(s, i);
         }
         int page = s->emoji_page < g.pages ? s->emoji_page : (g.pages > 0 ? g.pages - 1 : 0);
         for (int local = 0; local < g.per_page; local++) {

@@ -201,6 +201,31 @@ void gfx_line(float x0, float y0, float x1, float y1, float width, uint16_t colo
     }
 }
 
+void gfx_fill_triangle(float x0, float y0, float x1, float y1, float x2, float y2, uint16_t color)
+{
+    x0 += (float)s_ox; x1 += (float)s_ox; x2 += (float)s_ox;
+    y0 += (float)s_oy; y1 += (float)s_oy; y2 += (float)s_oy;
+    int bx0 = (int)floorf(fminf(x0, fminf(x1, x2))), bx1 = (int)ceilf(fmaxf(x0, fmaxf(x1, x2)));
+    int by0 = (int)floorf(fminf(y0, fminf(y1, y2))), by1 = (int)ceilf(fmaxf(y0, fmaxf(y1, y2)));
+    float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+    if (area == 0.f) return;
+    for (int yy = by0; yy < by1; yy++) {
+        for (int xx = bx0; xx < bx1; xx++) {
+            int hit = 0;
+            for (int sy = 0; sy < 4; sy++) {
+                for (int sx = 0; sx < 4; sx++) {
+                    float px = (float)xx + ((float)sx + 0.5f) * 0.25f, py = (float)yy + ((float)sy + 0.5f) * 0.25f;
+                    float w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) / area;
+                    float w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) / area;
+                    float w2 = 1.f - w0 - w1;
+                    if (w0 >= 0.f && w1 >= 0.f && w2 >= 0.f) hit++;
+                }
+            }
+            if (hit) blend8(xx - s_ox, yy - s_oy, color, hit * 255 / 16);
+        }
+    }
+}
+
 void gfx_blit_mask(int x, int y, const uint8_t *mask, int w, int h, uint16_t color)
 {
     x += s_ox; y += s_oy;

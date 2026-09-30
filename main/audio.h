@@ -44,5 +44,19 @@ bool audio_slot_mono(void);
 void audio_dump_regs(void);             /* print ES8311 registers */
 esp_err_t audio_set_mic_gain(int step); /* 0..7 = 0..42 dB in 6 dB steps */
 
+/* Streaming playback (music): the audio task calls read() for decoded stereo int16 frames and plays them until it returns
+ * 0 (end) / < 0 (error), or until stop / another command. read() and done() run in the audio task (a big stack: it may
+ * run an MP3 decoder). A new stream replaces a running one; recording and /play end it. */
+typedef struct {
+    int (*read)(void *ctx, int16_t *pcm, int max_frames, int *rate);   /* fill up to max_frames (L,R pairs), return frames, 0 = end */
+    void (*done)(void *ctx, bool finished);                             /* finished = played to the end; false = stopped / replaced */
+    void *ctx;
+} audio_stream_t;
+
+esp_err_t audio_stream_start(const audio_stream_t *s);
+void audio_stream_stop(void);
+void audio_stream_pause(bool pause);       /* silence, position kept */
+bool audio_stream_active(void);
+
 /* Soft two-note chime (silent alert option). */
 esp_err_t audio_play_chime(void);

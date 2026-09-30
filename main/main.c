@@ -30,6 +30,7 @@
 #include "imu.h"
 #include "cam_ui.h"
 #include "picview.h"
+#include "music.h"
 
 static const char *TAG = "main";
 
@@ -43,7 +44,7 @@ void app_set_chime(bool on) { s_chime = on; settings_set_str("chime", on ? "on" 
 
 void app_on_new_message(void)
 {
-    if (s_chime) audio_play_chime();
+    if (s_chime && !music_is_playing()) audio_play_chime();      /* a chime would cut the song off */
 }
 
 
@@ -142,11 +143,28 @@ void app_on_tap(int hit)
         if (ui_button_text(true, hit - UI_HIT_EMOJI_BTN0, buf, sizeof buf)) app_send_text(buf);
         return;
     }
+    if (hit >= UI_HIT_MUSIC_ROW0 && hit < UI_HIT_MUSIC_ROW0 + MUSIC_MAX_TRACKS) {
+        if (music_play(hit - UI_HIT_MUSIC_ROW0)) ui_set_screen(UI_SCREEN_MUSIC);
+        return;
+    }
     if (hit >= UI_HIT_PIC0 && hit < UI_HIT_PIC0 + UI_CHAT_MAX) {
         picview_open(ui_msg_pic_id(hit - UI_HIT_PIC0));
         return;
     }
     switch (hit) {
+    case UI_HIT_MUSIC_OPEN:
+        music_rescan();
+        ui_set_screen(UI_SCREEN_MUSIC);
+        break;
+    case UI_HIT_MUSIC_PLAY:
+        music_toggle();
+        break;
+    case UI_HIT_MUSIC_NEXT:
+        music_next();
+        break;
+    case UI_HIT_MUSIC_PREV:
+        music_prev();
+        break;
     case UI_HIT_FACE:
     case UI_HIT_CHAT:
         ui_blush();
@@ -224,6 +242,12 @@ void app_on_touch_activity(void)
     }
 }
 
+void app_set_volume(int percent)
+{
+    audio_set_volume(percent);
+    music_refresh();
+}
+
 void app_send_ink(const uint8_t *png, size_t len)
 {
     bridge_send_ink(png, len);
@@ -277,6 +301,7 @@ void app_main(void)
             board_touch_set_range(r[0], r[1], r[2], r[3]);
     }
     ui_start();
+    music_init();
     light_init();
     bridge_start();
     camui_init();
