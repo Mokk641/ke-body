@@ -234,7 +234,7 @@ static void touch_task(void *arg)
         bool down = board_touch_read(&x, &y);
         if (down) {
             lx = x; ly = y; miss = 0; was_down = true;
-        } else if (was_down && ++miss < (ui_get_screen() == UI_SCREEN_INK ? 4 : 2)) {
+        } else if (was_down && ++miss < (ui_get_screen() == UI_SCREEN_INK ? 4 : 3)) {
             down = true;       /* the FT6336 sometimes reports "no touch" for one scan mid-press: don't release yet */
         } else {
             was_down = false; miss = 0;

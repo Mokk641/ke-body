@@ -374,6 +374,7 @@ void board_touch_log(bool on) { s_touch_log = on; }
 
 static int s_tr[4] = { 0, BOARD_LCD_W - 1, 0, BOARD_LCD_H - 1 };          /* raw active area */
 static int s_seen[4] = { 4095, 0, 4095, 0 };
+static int s_seen_n;
 
 void board_touch_set_range(int xmin, int xmax, int ymin, int ymax)
 {
@@ -381,12 +382,14 @@ void board_touch_set_range(int xmin, int xmax, int ymin, int ymax)
     s_tr[0] = xmin; s_tr[1] = xmax; s_tr[2] = ymin; s_tr[3] = ymax;
 }
 
+int board_touch_samples(void) { return s_seen_n; }
+
 void board_touch_get_range(int out[4]) { memcpy(out, s_tr, sizeof s_tr); }
 
 void board_touch_seen(int out[4], bool reset)
 {
     memcpy(out, s_seen, sizeof s_seen);
-    if (reset) { s_seen[0] = 4095; s_seen[1] = 0; s_seen[2] = 4095; s_seen[3] = 0; }
+    if (reset) { s_seen[0] = 4095; s_seen[1] = 0; s_seen[2] = 4095; s_seen[3] = 0; s_seen_n = 0; }
 }
 
 bool board_touch_read(uint16_t *x, uint16_t *y)
@@ -405,6 +408,7 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
     if (rx > s_seen[1]) s_seen[1] = rx;
     if (ry < s_seen[2]) s_seen[2] = ry;
     if (ry > s_seen[3]) s_seen[3] = ry;
+    s_seen_n++;
     /* stretch the panel's real active area to the whole screen (identity unless `touchcal` was used) */
     rx = (rx - s_tr[0]) * (BOARD_LCD_W - 1) / (s_tr[1] - s_tr[0]);
     ry = (ry - s_tr[2]) * (BOARD_LCD_H - 1) / (s_tr[3] - s_tr[2]);

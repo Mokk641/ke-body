@@ -106,6 +106,7 @@ static bool tap_hit(int id)
 {
     int x, y;
     if (!find_hit(id, &x, &y)) return false;
+    host_now_us += 400000;                    /* a person does not tap the same thing twice within 250 ms */
     reset_counts();
     press_release(x, y, 90);
     return true;
@@ -489,6 +490,49 @@ int main(void)
         CHECK(cam_hi - cam_lo + 1 >= 30 + 16, "camera buttons have 8 px more touch area above and below (%d px)", cam_hi - cam_lo + 1);
         to_chat();
     }
+
+    /* ---- edge touches: a rolling finger must still count as a tap (v6.4) ---- */
+    to_chat();
+    snap();
+    CHECK(ui_hit_test(st, 10, 8) == UI_HIT_TOP_BACK, "top-left corner is the ⌄ button");
+    reset_counts();
+    host_now_us += 30000; ui_touch(true, 10, 8);
+    host_now_us += 30000; ui_touch(true, 14, 20);                 /* the finger rolls 12 px, then 20 px from where it landed */
+    host_now_us += 30000; ui_touch(true, 12, 28);
+    host_now_us += 30000; ui_touch(false, 0, 0);
+    settle(); snap();
+    CHECK(st->screen == UI_SCREEN_FACE, "⌄ at the very top edge works although the finger moved 20 px (no drag)");
+
+    to_chat();
+    /* first sample lands beside the button, the finger ends on it */
+    snap();
+    CHECK(ui_hit_test(st, 45, 20) == UI_HIT_TOPBAR && ui_hit_test(st, 30, 20) == UI_HIT_TOP_BACK, "the ⌄ button ends at x=36");
+    host_now_us += 30000; ui_touch(true, 45, 20);
+    host_now_us += 30000; ui_touch(true, 30, 22);
+    host_now_us += 30000; ui_touch(false, 0, 0);
+    settle(); snap();
+    CHECK(st->screen == UI_SCREEN_FACE, "a touch that starts next to a button and lifts on it counts for the button");
+
+    /* one contact split in two by the controller: the second half is ignored */
+    to_chat();
+    reset_counts();
+    press_release(20, gfx_height() - 6, 60);                        /* + at the very bottom row */
+    host_now_us += 90000;
+    press_release(20, gfx_height() - 6, 60);
+    snap();
+    CHECK(st->panel_open, "+ at the bottom row opens the panel, and a second tap 90 ms later is ignored (one contact)");
+    host_now_us += 400000;
+    press_release(20, gfx_height() - 6, 60);
+    snap();
+    CHECK(!st->panel_open, "a deliberate second tap later closes it again");
+    ui_panel_set(false); settle();
+
+    /* the log lines: they must not crash and each release says why */
+    ui_set_touchlog(true);
+    press_release(240, 100, 60);
+    press_release(20, 8, 60);
+    to_chat();
+    ui_set_touchlog(false);
 
     /* ---- touchlog: a marker follows the finger ---- */
     ui_set_touchlog(true);

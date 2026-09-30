@@ -35,6 +35,7 @@ void board_lcd_flush_rect(const uint16_t *fb, int x0, int y0, int x1, int y1);
 void board_touch_set_range(int xmin, int xmax, int ymin, int ymax);
 void board_touch_get_range(int out[4]);
 void board_touch_seen(int out[4], bool reset);      /* xmin xmax ymin ymax */
+int board_touch_samples(void);                      /* touch samples counted since the last reset */
 /* Optional colour calibration: gamma x100 (100 = none) and per-channel gain in percent. */
 void board_lcd_set_calibration(int gamma_x100, int r_pct, int g_pct, int b_pct);
 void board_lcd_get_calibration(int out[4]);

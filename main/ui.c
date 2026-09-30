@@ -967,6 +967,14 @@ static void touch_dot(int x, int y)
     if (moved) mark_dirty();
 }
 
+#define BTN_SLOP_PX   28    /* a finger on a button may wander this far (rolling at the screen edge, fat fingers) and still tap */
+#define EDGE_ZONE_PX  40    /* touches this close to a screen edge get the wider drag threshold */
+#define TLOG(...) do { if (s_touchlog) { printf("ui: " __VA_ARGS__); printf("\n"); } } while (0)
+
+static int64_t s_last_tap_t;
+static int s_last_tap_hit = UI_HIT_NONE;
+static int s_drag_px = DRAG_PX;        /* movement that turns a touch into a drag, chosen when the finger goes down */
+
 void ui_touch(bool down, int x, int y)
 {
     if (s_touchlog && (down || s_down)) touch_dot(down ? x : s_last_x, down ? y : s_last_y);
@@ -982,6 +990,13 @@ void ui_touch(bool down, int x, int y)
         s_hit = ui_hit_test(s_state, x, y);
         unlock();
         if (is_pressable(s_hit)) set_pressed(s_hit);
+        {
+            /* buttons: never a drag until the finger has really left; near the edges the controller's coordinates
+             * jump around as the finger rolls, so everything else gets a wider threshold there */
+            const bool edge = x < EDGE_ZONE_PX || y < EDGE_ZONE_PX || x >= gfx_width() - EDGE_ZONE_PX || y >= gfx_height() - EDGE_ZONE_PX;
+            s_drag_px = is_pressable(s_hit) ? BTN_SLOP_PX : (edge ? 2 * DRAG_PX : DRAG_PX + 4);
+            TLOG("down (%d,%d) hit=%d%s drag>%dpx", x, y, s_hit, edge ? " edge" : "", s_drag_px);
+        }
         app_on_touch_activity();
         if (s_hit == UI_HIT_INK_PAD && s_ink) {                    /* start of a stroke */
             int nx, ny;
@@ -1009,8 +1024,9 @@ void ui_touch(bool down, int x, int y)
     }
     if (down && s_down) {
         int dx = x - s_down_x, dy = y - s_down_y;
-        if (!s_dragging && (abs(dx) > DRAG_PX || abs(dy) > DRAG_PX)) {
+        if (!s_dragging && (abs(dx) > s_drag_px || abs(dy) > s_drag_px)) {
             s_dragging = true;
+            TLOG("drag started at (%d,%d), moved %d,%d from hit=%d", x, y, dx, dy, s_hit);
             s_axis_v = abs(dy) >= abs(dx);
             set_pressed(UI_HIT_NONE);
         }
@@ -1032,10 +1048,12 @@ void ui_touch(bool down, int x, int y)
         s_down = false;
         set_pressed(UI_HIT_NONE);
         if (s_long_fired) {
+            TLOG("up: long press ended (talk)");
             app_on_long_release();
             return;
         }
         if (s_dragging) {
+            TLOG("up: drag (%d,%d) from hit=%d -> swipe handling", s_last_x - s_down_x, s_last_y - s_down_y, s_hit);
             handle_swipe(s_axis_v, s_last_x - s_down_x, s_last_y - s_down_y);
             return;
         }
@@ -1044,10 +1062,23 @@ void ui_touch(bool down, int x, int y)
         lock();
         int hit_up = ui_hit_test(s_state, s_last_x, s_last_y);
         unlock();
-        if (hit_up != s_hit) return;
-        if (handle_tap_in_ui(s_hit)) return;
-        bool send_btn = s_hit >= UI_HIT_TEXT_BTN0 || s_hit == UI_HIT_GAL_SEND || s_hit == UI_HIT_GAL_DELETE;
-        if (send_btn && ui_is_sending()) return;           /* greyed out while a send is in progress: no double taps */
-        app_on_tap(s_hit);
+        /* which element was meant: a button under the finger at touch-down or at lift-off (the first sample of a
+         * rolling finger can land next to it); otherwise both ends must agree */
+        int target = UI_HIT_NONE;
+        if (is_pressable(s_hit)) target = s_hit;
+        else if (is_pressable(hit_up)) target = hit_up;
+        else if (hit_up == s_hit) target = s_hit;
+        if (target == UI_HIT_NONE) {
+            TLOG("up: ignored (down hit=%d, up hit=%d at (%d,%d) - not the same element)", s_hit, hit_up, s_last_x, s_last_y);
+            return;
+        }
+        if (target == s_last_tap_hit && now - s_last_tap_t < 250000) { TLOG("up: ignored (hit=%d again within 250 ms: one contact that the controller split in two)", target); return; }
+        s_last_tap_hit = target;
+        s_last_tap_t = now;
+        if (handle_tap_in_ui(target)) { TLOG("up: tap hit=%d handled by the UI", target); return; }
+        bool send_btn = target >= UI_HIT_TEXT_BTN0 || target == UI_HIT_GAL_SEND || target == UI_HIT_GAL_DELETE;
+        if (send_btn && ui_is_sending()) { TLOG("up: ignored (hit=%d, a send is in progress)", target); return; }   /* greyed out: no double taps */
+        TLOG("up: tap hit=%d -> app", target);
+        app_on_tap(target);
     }
 }

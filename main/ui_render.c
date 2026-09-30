@@ -31,7 +31,7 @@ static const palette_t PAL_LIGHT = PAL(L);
 #define MARGIN      10
 #define TOP_H       48      /* chat page top bar: small face circle + name */
 #define BOT_H       44      /* chat page bottom strip: only the + and camera icons float here (no background) */
-#define AV_D        36      /* diameter of the face circle in the top bar */
+#define AV_D        40      /* diameter of the face circle in the top bar */
 #define BUB_MARGIN  12      /* bubble distance from the screen edge */
 #define BUB_R       18      /* bubble corner radius */
 #define BUB_PADX    13
@@ -304,7 +304,7 @@ static void draw_face_page(const palette_t *p, const ui_state_t *s, const geo_t 
 /* ---- chat page --------------------------------------------------------------------------------- */
 
 typedef struct { int lines; int w, h; gfx_line_t ln[8]; const uint8_t *thumb; int tw, th; } msg_layout_t;
-#define THUMB_PAD 6      /* pink border around the white handwriting panel inside her bubble */
+#define THUMB_PAD 12     /* space left and right of the handwriting inside her bubble */
 
 static int bubble_max_w(int W) { return W * 70 / 100; }
 
@@ -316,8 +316,8 @@ static void measure_msg(const chat_msg_t *m, int W, msg_layout_t *out)
         out->thumb = ink_thumb_get(m->ink_slot - 1, &out->tw, &out->th);
         if (out->thumb) {
             out->lines = 0;
-            out->w = out->tw + 8 + 2 * THUMB_PAD;
-            out->h = out->th + 8 + 2 * THUMB_PAD;
+            out->w = out->tw + 2 * THUMB_PAD;
+            out->h = out->th + 2 * BUB_PADY;
             if (out->h < 2 * BUB_R) out->h = 2 * BUB_R;
             return;
         }
@@ -385,10 +385,7 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
             bool her = m->who == CHAT_HER;
             int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
             gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
-            if (ml.thumb) {                     /* white paper, dark ink, pink frame */
-                gfx_fill_round_rect(x + THUMB_PAD, y + THUMB_PAD, ml.tw + 8, ml.th + 8, 8, GFX_GREY(0xFF));
-                gfx_blit_mask(x + THUMB_PAD + 4, y + THUMB_PAD + 4, ml.thumb, ml.tw, ml.th, GFX_GREY(0x1C));
-            }
+            if (ml.thumb) gfx_blit_mask(x + THUMB_PAD, y + (ml.h - ml.th) / 2, ml.thumb, ml.tw, ml.th, p->her_txt);   /* white ink straight on her bubble */
             for (int k = 0; k < ml.lines; k++) {
                 gfx_draw_text_n(f, x + BUB_PADX, y + BUB_PADY + k * lh + f->ascent, ml.ln[k].start, ml.ln[k].len,
                                 her ? p->her_txt : p->ke_txt);
@@ -407,12 +404,13 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
 static void draw_mini_face(const palette_t *p, const char *face, int cx, int cy)
 {
     gfx_fill_circle(cx, cy, AV_D / 2, p->av_bg);
+    /* only eyes and mouth: what is between the first "(" and the last ")" (no brackets, no ♡ or other extras) */
     char core[UI_FACE_BUF];
     snprintf(core, sizeof core, "%s", face[0] ? face : "(—_—)");
-    size_t n = strlen(core);
-    if (core[0] == '(' && n > 1 && core[n - 1] == ')') { memmove(core, core + 1, n - 2); core[n - 2] = 0; }
+    char *lp = strchr(core, '('), *rp = strrchr(core, ')');
+    if (lp && rp && rp > lp + 1) { *rp = 0; memmove(core, lp + 1, strlen(lp + 1) + 1); }
     const kb_font_t *f = &kb_font_face18;
-    int inner = AV_D - 6, num = 10, den = 10;             /* the 18 px face font, shrunk in 10% steps until it fits */
+    int inner = AV_D - 4, num = 10, den = 10;             /* the 18 px face font, shrunk in 10% steps until it fits */
     while (num > 4 && gfx_text_width_scaled(f, core, num, den) > inner) num--;
     if (gfx_text_width_scaled(f, core, num, den) > inner) {   /* still too wide: cut */
         int len = gfx_fit_len(f, core, inner * den / num);
@@ -445,25 +443,25 @@ static void draw_top_bar(const palette_t *p, const ui_state_t *s, const geo_t *g
 static void draw_bottom_bar(const palette_t *p, const ui_state_t *s, const geo_t *g)
 {
     const int W = g->W, y0 = g->bar_y, mid = y0 + g->bot_h / 2;
-    /* no background of its own; once the panel is out the strip gets the panel colour so it reads as one sheet */
+    /* no bar of its own; once the panel is out the strip gets the panel colour so it reads as one sheet */
     if (s->panel_pos > 0) gfx_fill_rect(0, y0, W, g->bot_h, gfx_mix(p->bg, p->bar, (int)(ease(s->panel_pos) * 255.f)));
-    const uint16_t halo = s->panel_pos > 0 ? gfx_mix(p->bg, p->bar, (int)(ease(s->panel_pos) * 255.f)) : p->bg;
+
+    /* each icon sits on a solid round plate, so it stays readable when a bubble is scrolled underneath */
+    const int plate = 19;
+    const int lx = MARGIN + 22, rx = W - MARGIN - 22;
+    gfx_fill_circle(lx, mid, plate, p->bar);
+    gfx_fill_circle(rx, mid, plate, p->bar);
 
     /* + (turns into an x while the panel is out): thin lines */
     uint16_t ic = s->pressed == UI_HIT_PLUS ? p->icon_pressed : p->icon;
-    float cx = (float)(MARGIN + 21), cy = (float)mid, ang = ease(s->panel_pos) * 0.7853982f;
+    float cx = (float)lx, cy = (float)mid, ang = ease(s->panel_pos) * 0.7853982f;
     float ca = cosf(ang) * 8.f, sa = sinf(ang) * 8.f;
-    gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 4.8f, halo);        /* both halos first, then both strokes */
-    gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 4.8f, halo);
     gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 1.8f, ic);
     gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 1.8f, ic);
 
-    /* camera, thin lines with a halo */
+    /* camera, thin lines */
     uint16_t cc = s->pressed == UI_HIT_CAM_BTN ? p->icon_pressed : p->icon;
-    int px = W - MARGIN - 22;
-    gfx_draw_round_rect(px - 14, mid - 9, 28, 20, 6, 4, halo);
-    gfx_draw_round_rect(px - 6, mid - 12, 12, 8, 3, 3, halo);
-    gfx_ring((float)px, (float)mid + 1.f, 4.5f, 4.6f, halo);
+    int px = rx;
     gfx_draw_round_rect(px - 12, mid - 7, 24, 16, 4, 2, cc);
     gfx_draw_round_rect(px - 4, mid - 10, 8, 4, 2, 1, cc);
     gfx_ring((float)px, (float)mid + 1.f, 4.5f, 1.6f, cc);

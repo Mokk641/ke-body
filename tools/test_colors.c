@@ -62,7 +62,7 @@ int main(void)
     }
     CHECK(GFX_RGB(255, 255, 255) == 0xFFFF && GFX_GREY(255) == 0xFFFF, "white is 0xFFFF");
     CHECK(close_to(COL_D_KE_BUBBLE, 0x3A, 0x3A, 0x3C), "dark theme: my bubble ~ #3A3A3C (visible against black)");
-    CHECK(close_to(COL_D_HER_BUBBLE, 0xF0, 0x60, 0x9E) && COL_L_HER_BUBBLE == COL_D_HER_BUBBLE, "her bubble is pink #F0609E in both themes");
+    CHECK(close_to(COL_D_HER_BUBBLE, 0xF2, 0x70, 0x8F) && COL_L_HER_BUBBLE == COL_D_HER_BUBBLE, "her bubble is pink #F2708F in both themes");
     CHECK(close_to(COL_L_KE_BUBBLE, 0x1C, 0x1C, 0x1E) && COL_L_KE_TEXT == 0xFFFF && COL_L_HER_TEXT == 0xFFFF && close_to(COL_L_BAR, 0xF2, 0xF2, 0xF7) &&
           close_to(COL_L_SEP, 0xD1, 0xD1, 0xD6) && COL_L_BG == 0xFFFF, "light palette: white page, my bubble #1C1C1E with white text, her white text, bars #F2F2F7, separators #D1D1D6");
     CHECK(close_to(COL_D_BAR, 0x1C, 0x1C, 0x1E), "bars ~ #1C1C1E");

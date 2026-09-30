@@ -328,7 +328,9 @@ static int cmd_touchrange(int argc, char **argv)
     int seen[4];
     board_touch_seen(seen, argc == 2 && strcmp(argv[1], "reset") == 0);
     if (argc == 2 && strcmp(argv[1], "reset") == 0) { printf("touchrange: reset, now touch all four edges and corners of the screen\n"); return 0; }
-    printf("raw touch values seen since boot: x %d..%d (screen 0..319), y %d..%d (screen 0..479)\n", seen[0], seen[1], seen[2], seen[3]);
+    printf("raw touch values seen: x %d..%d (panel 0..319), y %d..%d (panel 0..479), from %d samples (one every 30 ms)\n",
+           seen[0], seen[1], seen[2], seen[3], board_touch_samples());
+    printf("(a quick swipe gives only a few samples and never records the extreme edge: to measure an edge, hold a finger still on it for a second)\n");
     printf("if a range is clearly smaller than the screen, the panel's edge is dead: run  touchcal %d %d %d %d\n",
            seen[0], seen[1], seen[2], seen[3]);
     return 0;
