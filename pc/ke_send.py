@@ -11,7 +11,9 @@ ke_send.py - send things to the ke-body board.
     ke_send.py theme dark              # dark / light
     ke_send.py heard "她说的话"         # speech-to-text result -> her side of the chat
     ke_send.py buttons buttons.json    # quick-button config (file or JSON string)
-    ke_send.py anim on                 # animations on/off
+    ke_send.py anim off                # all animations on/off
+    ke_send.py anim blink on           # one of: blink blush zzz shake flash
+    ke_send.py anim status
     ke_send.py chime on                # soft tone on new message on/off
     ke_send.py peek on                 # allow remote snapshots (eye icon on the screen)
     ke_send.py snap photo.jpg          # take a photo (needs peek on) and save it here
@@ -82,8 +84,10 @@ def main():
     sub.add_parser("brightness").add_argument("level", type=int)
     sub.add_parser("theme").add_argument("name", choices=["dark", "light"])
     sub.add_parser("heard").add_argument("text")
-    sub.add_parser("buttons").add_argument("json", help="a .json file or a JSON string")
-    sub.add_parser("anim").add_argument("state", choices=["on", "off"])
+    sub.add_parser("buttons").add_argument("json", help="a .json file, a JSON string, or the word reset")
+    sp = sub.add_parser("anim")
+    sp.add_argument("args", nargs="+", metavar="[name] on|off|status",
+                    help="on|off (all)  |  blink|blush|zzz|shake|flash on|off  |  status")
     sub.add_parser("chime").add_argument("state", choices=["on", "off"])
     sub.add_parser("peek").add_argument("state", choices=["on", "off"])
     sub.add_parser("snap").add_argument("out", nargs="?", default="snap.jpg")
@@ -111,11 +115,13 @@ def main():
             code, text = request(args.board, "/heard", args.text.encode("utf-8"))
         elif args.cmd == "buttons":
             body = args.json
-            if os.path.exists(body):
+            if body != "reset" and os.path.exists(body):
                 with open(body, "r", encoding="utf-8") as f:
                     body = f.read()
             code, text = request(args.board, "/buttons", body.encode("utf-8"), "application/json")
-        elif args.cmd in ("anim", "chime", "peek"):
+        elif args.cmd == "anim":
+            code, text = request(args.board, "/anim", " ".join(args.args[:2]).encode())
+        elif args.cmd in ("chime", "peek"):
             code, text = request(args.board, "/" + args.cmd, args.state.encode())
         elif args.cmd == "snap":
             req = urllib.request.Request(f"http://{args.board}/snap", method="GET")

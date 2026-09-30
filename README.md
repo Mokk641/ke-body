@@ -13,6 +13,7 @@
 | v3.3 | `release/ke-body-v3.3.bin` | + 默认音量 18；表情字库补 ˍ 皿 ﹏；💢 💧 做成线条图标 | 已上板：屏幕、触摸、横屏 270、黑底、亮度、夜间变暗、喇叭、回环、麦克风都正常 |
 | v4 | `release/ke-body-v4.bin`（合并）<br>`release/ke-body-app-v4.bin`（只含应用） | + 第四期：聊天记录 + 快捷按钮、动画、QMI8658 摇晃/扣桌、静音提醒、相机/相册/寄照片/远程 /snap、bridge 收 /msg /photo | 已上板：显示、横屏、`msg` 发到 bridge 正常；**屏幕按钮点了没反应**（v4.1 修） |
 | v4.1 | `release/ke-body-v4.1.bin`（合并）<br>`release/ke-body-app-v4.1.bin`（只含应用） | 修：按钮/相机/相册点击无反应；聊天上下滑方向反了；串口能输入中文 | 主机测试通过，**未上板** |
+| v5 | `release/ke-body-v5.bin`（合并）<br>`release/ke-body-app-v5.bin`（**只含应用，推荐**，烧 0x10000，保留 NVS） | 第五期界面美化：脸页 + 聊天页上下滑切换、圆角气泡、+ 面板（快捷语 + 表情分页）、动画分项开关 | 编译通过、主机测试通过，**未上板** |
 
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
@@ -62,9 +63,21 @@
 | 21 | 静音提醒 | 收到 `/say` 时屏幕边框轻闪两下；`chime on` 再加一段很轻的两音提示（默认关） |
 | 22 | 相机 | 聊天界面「相机」键进相机：实时取景（约 5–10 fps），点取景或「拍照」拍一张 SXGA 1280×1024 JPEG，存 SD 卡 `/sdcard/DCIM/`（没卡存内部 Flash 最多 12 张）；「相册」左右滑看、删除、「寄给克」（`POST /photo`，**不点绝不上传**） |
 | 23 | 让克看看 | `peek on` / `POST /peek on`（存 NVS，默认关）时电脑可 `GET /snap` 远程拍一张直接回传 JPEG，屏幕角落常亮小眼睛；关着时 `/snap` 一律 403 |
-| 24 | 小动画 | 待机每 3–13 秒随机眨眼；睡脸时 z/Z 从脸右边往上飘淡出；摸脸「//」粉色渐显渐隐；摇晃时脸左右抖两下；`anim off` 全关 |
+| 24 | 小动画 | （第五期已调整，见下）睡脸时 z/Z 往上飘；摸脸「//」粉色渐显渐隐；摇晃时脸左右抖两下 |
 
 语音转文字、文字转语音不在固件里，电脑那边另外接。
+
+### 第五期（界面美化）
+
+| # | 功能 | 说明 |
+|---|------|------|
+| 25 | 两个页面 | **脸页（默认）**：全黑底，脸大大居中，脸下面一行淡字 = 克最近一句，底部小字「⌃ 上滑聊天」。**聊天页**：脸页上滑（或点「⌃ 上滑聊天」）进入；下滑顶栏 / 点顶栏「⌄」返回（聊天内容很短时，在消息区下滑也能返回；内容很长时消息区下滑是翻历史）。两页之间是竖向滑动动画（约 0.25 秒） |
+| 26 | 聊天页布局 | 顶栏：左边一个随表情变的小脸 +「克」，右边在线点（bridge 通 = 绿，不通 = 灰；每 15 秒探测一次 `GET <bridge>/ping`）。中间：消息列表，新消息自动滚到底；克的消息在左，头像是**发出那一刻的表情**（小脸）；她的在右。底栏：左「+」，右相机图标 |
+| 27 | 「+」面板 | 点「+」从底栏上方滑出：上半是快捷语胶囊（默认 想你了 / 抱抱 / 在干嘛 / 晚安），下半是表情格子（左右滑翻页，页码小点）。再点「+」（变成 ⊗）或点上面的空白处收起。点快捷语/表情 = 发到 bridge `/msg` 并进聊天，面板保持展开 |
+| 28 | 气泡 | 大圆角（16px）。暗色：克 = 墨绿 `#2F4A3A` + 奶白字；她 = 奶油 `#EFE3CF` + 深棕字；顶/底栏比背景略浅、分隔线极淡。亮色另有一套。所有颜色是宏，在 `main/ui_colors.h` |
+| 29 | 表情格 | 格子更大，默认 10 个：`(—ω—) (—//—) (—▽—)♡ (—ε—) (—_—)♡ (—︵—) V(—ω—)V (—o—) (=ω=) (—∀-)`；一页里字号统一，放不下就整体缩小（最小 13px，再不行折两行），不截断。`POST /buttons` 仍可配置（最多 8 个快捷语、30 个表情） |
+| 30 | 动画调整 | **默认关**：随机眨眼、粉色边框闪。**默认开**：脸红「//」、睡觉 z 飘、摇晃抖。每项一个开关，存 NVS（见 `anim` 命令、`POST /anim`） |
+| 31 | 新消息提示 | 脸页：脸变 `(—o—)` 约 1 秒再变回去，下面那行字淡入；聊天页：新气泡从底部滑入，没有边框。睡觉时不变脸。`chime on` 的提示音照旧（默认关）。边框闪可用 `anim flash on` 重新打开 |
 
 ---
 
@@ -128,8 +141,10 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body
 | `audio regs` | 打印 ES8311 全部寄存器和芯片 ID |
 | `audio gain <0-7>` | 麦克风 PGA 增益，0=0dB，每步 6dB，默认 5（30dB） |
 | `msg <文字>` | 等于按了一个快捷按钮：进聊天记录并发到 bridge `/msg` |
-| `buttons` | 打印当前按钮配置 JSON |
-| `anim on|off` | 小动画总开关，存 NVS |
+| `buttons` / `buttons reset` | 打印当前按钮配置 JSON / 恢复内置默认（并清掉 NVS 里存的旧配置） |
+| `anim` | 打印各动画开关状态 |
+| `anim on|off` | 所有动画的总开关（关掉时各项开关的设置保留），存 NVS |
+| `anim blink|blush|zzz|shake|flash on|off` | 单项开关，存 NVS。blink 眨眼（默认关）、blush 脸红、zzz 睡觉的 z 飘、shake 摇晃抖脸、flash 新消息边框闪（默认关） |
 | `chime on|off` | 收到消息时是否响一声，存 NVS，默认关 |
 | `imu` / `imu invert on|off` | 打印加速度；如果「扣在桌上」方向反了（拿起来反而睡），`imu invert on` |
 | `autorotate on|off` | 随手转屏（默认关；轴向未验证） |
@@ -157,8 +172,11 @@ curl -X POST --data-binary "light" http://192.168.1.23/theme             # dark 
 curl -X POST --data-binary "我想你"  http://192.168.1.23/heard             # 她说的话（语音转文字结果）进聊天右侧，不闪
 curl -X POST -H "Content-Type: application/json" --data-binary @buttons.json http://192.168.1.23/buttons
         # {"text":["想你了","抱抱","在干嘛","晚安"],"emoji":["(´ω`)","(≧▽≦)","♡","💧"],"shake":"想你了"}
-        # 每排最多 8 个、每个最多 12 字，整体 <1KB；也可以只给一个数组（=文字行）。GET /buttons 看当前值
-curl -X POST --data-binary "off"   http://192.168.1.23/anim              # 动画 on/off
+        # 快捷语最多 8 个（每个 12 字以内）、表情最多 30 个（每个 20 字以内），整体 <2KB；也可以只给一个数组（=快捷语）。GET /buttons 看当前值
+curl -X POST --data-binary "reset" http://192.168.1.23/buttons           # 恢复内置默认按钮
+curl -X POST --data-binary "off"   http://192.168.1.23/anim              # 全部动画 on/off
+curl -X POST --data-binary "blink on"  http://192.168.1.23/anim          # 单项：blink blush zzz shake flash
+curl -X POST --data-binary "status"    http://192.168.1.23/anim          # 看各项开关
 curl -X POST --data-binary "on"    http://192.168.1.23/chime             # 提示音 on/off
 curl -X POST --data-binary "on"    http://192.168.1.23/peek              # 让克看看 on/off
 curl -o snap.jpg                   http://192.168.1.23/snap              # 远程拍一张（peek 关着返回 403）
@@ -200,18 +218,23 @@ python pc/ke_send.py brightness 40
 python pc/ke_send.py theme dark
 python pc/ke_send.py heard "我想你"        # 语音转文字的结果送回板子，显示在她那一侧
 python pc/ke_send.py buttons buttons.json # 按钮配置（文件或 JSON 字符串）
-python pc/ke_send.py anim off
+python pc/ke_send.py anim off              # 全部动画
+python pc/ke_send.py anim blink on         # 单项：blink blush zzz shake flash
+python pc/ke_send.py anim status
+python pc/ke_send.py buttons reset         # 恢复默认快捷语和表情
 python pc/ke_send.py chime on
 python pc/ke_send.py peek on
 python pc/ke_send.py snap photo.jpg       # 远程拍一张存到本地（需要 peek on）
 ```
 
-### 3.3.1 屏幕操作（第四期）
+### 3.3.1 屏幕操作（第五期）
 
-- **聊天界面**：顶部是脸（右上角 IP，peek 开着时多一个小眼睛），中间聊天记录可上下滑，底部第一排文字按钮 + 「相机」，第二排表情按钮。点脸或记录区 = 脸红；**按住 0.5 秒 = 说话**（同第二期）；按钮点一下就发。
-- **相机**：点「相机」进入取景；点画面或「拍照」拍一张，画面下方提示「已保存 xxx.jpg」；「相册」看照片；「返回」回聊天并关相机（省电）。取景是横屏 480×320，竖屏模式下只显示中间一截。
-- **相册**：左右滑动切换（拖动超过 40px），「删除」直接删当前这张，「寄给克」发到 bridge `/photo`（只有点了才发），「返回」回聊天。
+- **脸页**（开机默认）：黑底大脸；脸下面一行淡字是克最近一句；右上角小字是 IP（peek 开着时旁边有小眼睛）；底部「⌃ 上滑聊天」。点脸 = 脸红；**按住 0.5 秒 = 说话**（同第二期）。**手指从下往上划 ≥40px**（或点底部那行小字）进聊天页。
+- **聊天页**：顶栏「⌄ 小脸 克 ●」——点⌄，或在顶栏上往下划，回脸页；消息区上下拖动翻历史（往下拖 = 看更早的），按住 0.5 秒同样是说话。底栏左「+」右相机：点「+」展开面板（快捷语 + 表情，表情区左右滑翻页），点面板里的按钮 = 发送；再点「+」或点面板上方空白处收起。点相机图标进相机。
+- **相机**：取景；点画面或「拍照」拍一张，画面下方提示「已保存 xxx.jpg」；「相册」看照片；「返回」回**聊天页**并关相机（省电）。取景是横屏 480×320，竖屏模式下只显示中间一截。
+- **相册**：左右滑动切换（拖动超过 40px），「删除」直接删当前这张，「寄给克」发到 bridge `/photo`（只有点了才发），「返回」回聊天页。
 - **睡觉**：屏幕朝下扣桌上 1.5 秒 → 睡脸 + z 飘 + 背光 5；拿起来或摸一下屏幕恢复。
+- **换颜色**：改 `main/ui_colors.h` 里的 `COL_D_*`（暗色）/ `COL_L_*`（亮色）宏，重新编译。字段有 BG、KE_BUBBLE、KE_TEXT、HER_BUBBLE、HER_TEXT、BAR、SEP、CAP（胶囊）、CELL（表情格）、ONLINE、OFFLINE 等。
 
 ### 3.4 按住说话的流程
 
@@ -305,8 +328,9 @@ main/
   app_actions.h   触摸动作回调（main.c 实现）
   uploader.c/.h   esp_http_client POST WAV
   settings.c/.h   NVS 里的字符串设置
-  ui.c/.h         UI 状态：聊天环、按钮配置、动画 tick、触摸状态机、旋转/主题（NVS）
-  ui_render.c/.h  画面布局 + 命中测试（纯 C，横竖屏、深浅两套配色、聊天/相机/相册三个屏幕）
+  ui.c/.h         UI 状态：聊天环、按钮配置、页面滑动/面板/气泡滑入动画 tick、触摸状态机、旋转/主题/动画开关（NVS）
+  ui_render.c/.h  画面布局 + 命中测试（纯 C，横竖屏、深浅两套配色、脸页/聊天页/相机/相册）
+  ui_colors.h     所有界面颜色宏（COL_D_* 暗色、COL_L_* 亮色）
   gfx.c/.h        小型软件渲染器
   kb_font.h / fonts/   位图字体
   wifi_mgr.c/.h   NVS 凭据 + STA 连接 + 自动重连
@@ -332,11 +356,11 @@ release/ke-body-app-vX.bin   只含应用（0x10000，第四期起）
 
 | 字体 | 像素 | 内容 | 来源 |
 |------|------|------|------|
-| face64 / face44 / face30 | 64/44/30 | ASCII + 约 280 个颜文字常用符号（含 ˍ 皿 ﹏）+ 两个线条图标 💢 💧 | DejaVu Sans，缺字回退文泉驿正黑 / Unifont；图标由脚本用 Pillow 画 |
+| face96 / face64 / face44 / face30 / face18 / face13 | 96/64/44/30/18/13 | ASCII + 约 280 个颜文字常用符号（含 ˍ 皿 ﹏）+ 两个线条图标 💢 💧 | DejaVu Sans，缺字回退文泉驿正黑 / Unifont；图标由脚本用 Pillow 画 |
 | text22 | 22 | ASCII + 中文标点 + **GB2312 全部 6763 个汉字** + 颜文字符号 | 文泉驿正黑（WenQuanYi Zen Hei） |
-| small14 | 14 | ASCII + 状态用的几十个汉字 | 文泉驿正黑 |
+| small14 | 14 | ASCII + 扫描 `main/*.c` 得到的所有界面用汉字 | 文泉驿正黑 |
 
-位图总计约 1.9MB，全部放在 Flash，不占 RAM。字库里没有的字画一个空心方框。💢（U+1F4A2）和 💧（U+1F4A7）是彩色 emoji，没有单色字体，`gen_fonts.py` 里的 `render_icon()` 用线条画成和表情同高的位图，当作普通字形放进 face 字体和气泡字体，颜色跟随主题。要加别的 emoji 图标就在 `ICON_CODEPOINTS` 里加一项并写画法。颜文字先试 64px，放不下降到 44px、30px，再放不下折两行。横屏时脸的可用宽度是 456px，长颜文字更容易保持 64px。
+位图总计约 2.4MB，全部放在 Flash，不占 RAM。字库里没有的字画一个空心方框。💢（U+1F4A2）和 💧（U+1F4A7）是彩色 emoji，没有单色字体，`gen_fonts.py` 里的 `render_icon()` 用线条画成和表情同高的位图，当作普通字形放进 face 字体和气泡字体，颜色跟随主题。要加别的 emoji 图标就在 `ICON_CODEPOINTS` 里加一项并写画法。脸页颜文字先试 96px，再依次降到 64/44/30px，再放不下折两行；聊天小脸和表情格用 30/18/13px。**新加界面文字后要重新跑 `gen_fonts.py`**，否则小字显示成方框（small14 会自动扫描源码里的汉字）。横屏时脸的可用宽度是 456px，长颜文字更容易保持 64px。
 
 字体版权：DejaVu（自由字体许可）、文泉驿正黑（GPLv2 + 字体嵌入例外）、GNU Unifont（GPLv2+ 字体例外 / OFL）。
 
@@ -345,8 +369,10 @@ release/ke-body-app-vX.bin   只含应用（0x10000，第四期起）
 ### 5.2 电脑上预览画面
 
 ```
-gcc -O1 -Imain -o preview tools/host_preview.c main/gfx.c main/ui_render.c main/fonts/font_*.c
-./preview out.ppm "(´・ω・\`)♡" "你好呀，我是小身体。" "192.168.1.23" landscape dark
+gcc -O1 -Imain -o preview tools/host_preview.c main/gfx.c main/ui_render.c main/fonts/font_*.c -lm
+./preview out.ppm --land --page chat --panel 255          # 聊天页 + 面板
+./preview out.ppm --port --line "早安" --light             # 竖屏、亮色、脸页
+# 其它：--slide N(切页中间帧) --epage N --sleep --blush N --offline --toast 文字 --scroll PX，见 tools/host_preview.c 开头
 ```
 
 ---
@@ -358,7 +384,7 @@ tools/run_host_tests.sh [/path/to/esp-idf]
 ```
 
 - `tools/test_lineedit.c`：串口行编辑器（中文/emoji 原样通过、退格删整字、历史、Ctrl-C/U、CRLF、超长）。
-- `tools/test_ui_touch.c`：把**真实的** `main/ui.c` 触摸状态机和 `main/ui_render.c` 命中测试在电脑上编译（`tools/hoststubs/` 里桩掉 FreeRTOS、定时器），模拟点按、松手不带坐标、长按、拖动、聊天滑动、相机/相册按钮和左右滑。这个测试在 v4 的 `ui.c` 上会失败（1280 个按钮位置全部点不中），在 v4.1 上全过。需要 ESP-IDF 里的 cJSON 源码。
+- `tools/test_ui_touch.c`：把**真实的** `main/ui.c` 触摸状态机和 `main/ui_render.c` 命中测试在电脑上编译（`tools/hoststubs/` 里桩掉 FreeRTOS、定时器），模拟点按、松手不带坐标、长按、拖动、聊天滑动、相机/相册按钮和左右滑。v5 起覆盖：脸页上滑进聊天、点提示条、点⌄、顶栏下滑、短聊天下滑返回、长聊天下滑是翻历史而不是返回、「+」展开/收起、点空白收起、快捷语和表情点击（含绝对序号）、表情左右翻页、相机图标、两个页面的长按说话、松手不带坐标（v4 那个 bug）、新消息 `(—o—)` 一秒后恢复、动画默认值和分项开关、默认表情在各字号字库里有字。需要 ESP-IDF 里的 cJSON 源码。
 
 ---
 
@@ -380,6 +406,20 @@ v3.3：横屏 270、黑底、亮度、夜间变暗、喇叭（TCA9554 P7 使能�
 3. **聊天上下滑方向反了**（自查发现，你还没碰到）：v4 往下拖是更靠近最新，与手机相反。现在手指往下拖 = 看更早的消息，往上拖回最新；新消息来了自动回到底部。
 4. **串口中文**：见 §3.1。IDF linenoise 的 `sanitize()` 用 `isprint()` 把 ≥0x80 的字节全删，不是终端 GBK 的问题；自带行编辑器已经替换。上板后 `msg 想你了` 应该能进聊天并发到 bridge。
 5. 串口现在跑在我们自己的任务里（栈 8KB，`cam on` 之类耗栈的命令也在这个任务里跑）。和之前相比只少了 Tab 补全，其它命令不变。
+
+### 第五期（v5，全部未上板）
+
+只在电脑上验证过：编译通过（应用 3.8MB，6MB 分区剩 39%）、分区表和 bootloader 与 v4.1 逐字节相同（所以 app-only 可以直接刷）、主机测试通过、画面用 `host_preview` 渲染后看过。**以下上板后请逐条确认**：
+
+1. **切页/气泡滑入的帧率**：整屏软件渲染 + SPI 推屏，估计 12–20 fps，0.25 秒的滑动可能只有 3–5 帧，会有点顿。如果观感不行，把 `main/ui.c` 里 `PAGE_STEP` 调大（更快）或把切页改成硬切。
+2. **手势手感**：竖滑阈值 40px、判定为拖动 10px。太灵敏/太迟钝改 `SWIPE_PX` / `DRAG_PX`。FT6336 偶尔漏读一帧，已容忍一次。
+3. **小头像**：克的消息头像是发送时表情缩小到 18px（放不下 13px），很长的颜文字会被裁在头像框里，没在真机看。
+4. **在线点**：探测的是 `server` 地址同一主机的 `GET /ping`；`ke_bridge.py` 对任何 GET 都回 200，所以电脑上 bridge 开着 = 绿。没设 `server` 或 Wi-Fi 没连 = 灰。第一次探测在开机后 Wi-Fi 连上才开始，最长延迟 15 秒。
+5. **旧 NVS 里的按钮配置**：如果你之前 `POST /buttons` 存过自己的配置，升级后仍然用旧配置（只有 4 个表情），要用新默认表情请 `buttons reset`。
+6. **动画默认值变了**：眨眼、边框闪默认关。NVS 里没有这些键，所以升级后自动是新默认；之前的 `anim off` 总开关（若存过）仍然生效，想恢复用 `anim on`。
+7. **横屏表情格**：横屏每格约 110px 宽，`(—ω—)` 在 30px 下放不下，所以整页统一用 18px，比竖屏小一些；想要更大可以在 `ui_render.c` 里减小格间距或改列数。
+8. **脸页的长按说话**、**相机回聊天页的滑动动画（无，直接切）**、**竖屏排版**（主机预览看过，真机没看）。
+9. 聊天页在「+」面板展开时，消息区高度变小，最新消息始终留在可见区；这个滚动位置行为只在主机测试里验证。
 
 ### 第四期（v4，v4.1 之外的部分仍未验证）
 

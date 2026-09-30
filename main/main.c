@@ -132,23 +132,13 @@ void app_send_text(const char *text)
 
 void app_on_tap(int hit)
 {
-    ui_state_t *s = NULL;
-    if (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_TEXT_BTN0 + UI_MAX_BUTTONS) {
-        s = malloc(sizeof(ui_state_t));
-        if (!s) return;
-        ui_get_state_copy(s);
-        int i = hit - UI_HIT_TEXT_BTN0;
-        if (i < s->text_btn_n) app_send_text(s->text_btn[i].text);
-        free(s);
+    char buf[UI_BTN_TEXT_LEN];
+    if (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_TEXT_BTN0 + UI_MAX_TEXT_BTN) {
+        if (ui_button_text(false, hit - UI_HIT_TEXT_BTN0, buf, sizeof buf)) app_send_text(buf);
         return;
     }
-    if (hit >= UI_HIT_EMOJI_BTN0 && hit < UI_HIT_EMOJI_BTN0 + UI_MAX_BUTTONS) {
-        s = malloc(sizeof(ui_state_t));
-        if (!s) return;
-        ui_get_state_copy(s);
-        int i = hit - UI_HIT_EMOJI_BTN0;
-        if (i < s->emoji_btn_n) app_send_text(s->emoji_btn[i].text);
-        free(s);
+    if (hit >= UI_HIT_EMOJI_BTN0 && hit < UI_HIT_EMOJI_BTN0 + UI_MAX_EMOJI_BTN) {
+        if (ui_button_text(true, hit - UI_HIT_EMOJI_BTN0, buf, sizeof buf)) app_send_text(buf);
         return;
     }
     switch (hit) {

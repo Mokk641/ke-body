@@ -6,25 +6,38 @@
 #include "esp_err.h"
 #include "ui_render.h"
 
-void ui_start(void);                   /* loads rotation/theme/buttons from NVS, draws the first frame */
+void ui_start(void);                   /* loads rotation/theme/buttons/animation switches from NVS, draws the first frame */
 
 /* face */
 void ui_set_face(const char *utf8);    /* base expression, truncated to UI_FACE_MAX_CHARS */
-void ui_set_corner(const char *utf8);  /* top-right status text (base: IP / wifi state) */
-void ui_blush(void);                   /* "(—//—)" fading in and out for ~2 s */
+void ui_set_corner(const char *utf8);  /* small status text (base: IP / wifi state) */
+void ui_blush(void);                   /* "(—//—)" with a pink // fading in and out for ~2 s */
 void ui_override_face(const char *utf8);    /* recording / playing; NULL restores */
 void ui_override_corner(const char *utf8);
 
 /* chat */
-void ui_chat_add(chat_who_t who, const char *utf8);   /* appends, scrolls to bottom */
-void ui_set_say(const char *utf8);     /* = ui_chat_add(CHAT_KE, ...) + silent alert; "" is ignored */
+void ui_chat_add(chat_who_t who, const char *utf8);   /* appends (Ke's carry the current face as avatar), scrolls to bottom */
+void ui_set_say(const char *utf8);     /* Ke's message: chat + face-page line + "(—o—)" notice; "" is ignored */
 void ui_toast(const char *utf8, int ms);
 void ui_scroll_by(int dy);
+void ui_set_online(bool online);       /* bridge reachable: green dot in the chat top bar */
 
-/* buttons: JSON {"text":[...],"emoji":[...],"shake":"..."} or a plain array (text row) */
+/* pages */
+void ui_go_page(ui_screen_t page);     /* UI_SCREEN_FACE or UI_SCREEN_CHAT, with the slide animation */
+void ui_set_screen(ui_screen_t screen);/* immediate switch (camera / gallery flows) */
+ui_screen_t ui_get_screen(void);
+void ui_panel_set(bool open);          /* slide-up panel on the chat page */
+bool ui_panel_is_open(void);
+void ui_emoji_page_step(int dir);      /* +1 / -1 */
+
+#define BUTTONS_JSON_MAX 2048
+
+/* buttons: JSON {"text":[...],"emoji":[...],"shake":"..."} or a plain array (= the phrase row) */
 esp_err_t ui_set_buttons_json(const char *json);
-const char *ui_get_buttons_json(void);          /* current config as JSON (static buffer) */
+esp_err_t ui_reset_buttons(void);                 /* back to the built-in defaults (erases the saved config) */
+const char *ui_get_buttons_json(void);            /* current config as JSON (static buffer) */
 const char *ui_shake_text(void);
+bool ui_button_text(bool emoji, int index, char *out, size_t out_len);   /* false if no such button */
 
 /* display settings (saved to NVS) */
 esp_err_t ui_set_rotation(int rotation);
@@ -33,18 +46,20 @@ int ui_get_rotation(void);
 esp_err_t ui_set_theme(const char *name);
 const char *ui_get_theme(void);
 
-/* animation (phase 4.8) */
-void ui_set_anim(bool on);
+/* animations. Each one has its own switch (saved to NVS); "all" is the master switch.
+ * names: blink (default off), blush, zzz, shake (default on), flash = border flash (default off) */
+bool ui_anim_set(const char *name, bool on);      /* false if the name is unknown */
+bool ui_anim_get(const char *name, bool *on);     /* false if the name is unknown */
+void ui_anim_status(char *out, size_t out_len);
+void ui_set_anim(bool on);                        /* = ui_anim_set("all", on) */
 bool ui_get_anim(void);
 void ui_set_sleeping(bool on);         /* face-down: sleep face + z's */
 bool ui_is_sleeping(void);
 void ui_shake(void);                   /* face wobbles left/right briefly */
-void ui_flash_border(void);            /* silent alert: two soft flashes */
+void ui_flash_border(void);            /* optional silent alert: two soft border flashes (only if the flash switch is on) */
 void ui_set_peek_icon(bool on);
 
-/* screens (camera / gallery) */
-void ui_set_screen(ui_screen_t screen);
-ui_screen_t ui_get_screen(void);
+/* camera / gallery screens */
 void ui_set_frame(const uint16_t *frame, int w, int h);   /* image shown on camera/gallery screen */
 void ui_set_cam_text(const char *utf8);
 void ui_set_gallery_pos(int index, int count);

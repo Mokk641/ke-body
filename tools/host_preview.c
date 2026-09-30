@@ -1,9 +1,19 @@
-/* Host-side preview of the screen layout. Compiles gfx.c + ui_render.c + fonts
- * with a normal C compiler and writes a PPM image, so layout and font rendering
- * can be checked without the board.
+/* Host-side preview of the screens. Compiles gfx.c + ui_render.c + fonts with a normal C
+ * compiler and writes a PPM image, so layout, colours and fonts can be checked without the board.
  *
- *   gcc -O1 -Imain -o /tmp/preview tools/host_preview.c main/gfx.c main/ui_render.c main/fonts/font_*.c
- *   /tmp/preview out.ppm "(—_—)" "corner" [portrait|landscape] [dark|light] [chat|camera|gallery] [toast]
+ *   gcc -O1 -Imain -o /tmp/preview tools/host_preview.c main/gfx.c main/ui_render.c main/fonts/font_*.c -lm
+ *   /tmp/preview out.ppm [options]
+ *
+ * options:  --land | --port         orientation (default land)
+ *           --light                 light theme
+ *           --page face|chat|camera|gallery   (default face)
+ *           --slide N               page_pos 0..255 (a frame in the middle of the face<->chat slide)
+ *           --panel N               panel_pos 0..255 on the chat page (255 = fully out); --epage N = emoji page
+ *           --face TEXT             expression         --corner TEXT       status text
+ *           --line TEXT             latest sentence from Ke (adds a message)
+ *           --sleep                 sleeping face with z's (--tick N picks the animation frame)
+ *           --blink | --blush N     eyes closed / blush "//" strength 0..255
+ *           --toast TEXT | --offline | --peek | --pressed HITID | --scroll PX | --few | --slidein PX
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,49 +21,85 @@
 #include "gfx.h"
 #include "ui_render.h"
 
-static void add(ui_state_t *s, int who, const char *t)
+static void add(ui_state_t *s, int who, const char *face, const char *t)
 {
     if (s->msg_count >= UI_CHAT_MAX) return;
-    s->msgs[s->msg_count].who = who;
-    snprintf(s->msgs[s->msg_count].text, UI_SAY_BUF, "%s", t);
-    s->msg_count++;
+    chat_msg_t *m = &s->msgs[s->msg_count++];
+    m->who = who;
+    snprintf(m->face, sizeof m->face, "%s", face ? face : "");
+    snprintf(m->text, sizeof m->text, "%s", t);
 }
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s out.ppm [face] [corner] [portrait|landscape] [dark|light] [chat|camera|gallery] [toast]\n", argv[0]);
-        return 1;
-    }
-    int w = 320, h = 480;
-    if (argc > 4 && strcmp(argv[4], "landscape") == 0) { w = 480; h = 320; }
-    static uint16_t fb[320 * 480];
-    gfx_init(fb, w, h);
+    if (argc < 2) { fprintf(stderr, "usage: %s out.ppm [options]\n", argv[0]); return 1; }
+    bool land = true, few = false;
     ui_state_t *s = calloc(1, sizeof(ui_state_t));
     s->pressed = UI_HIT_NONE;
-    if (argc > 2) snprintf(s->face, sizeof s->face, "%s", argv[2]);
-    if (argc > 3) snprintf(s->corner, sizeof s->corner, "%s", argv[3]);
-    s->theme = (argc > 5 && strcmp(argv[5], "light") == 0) ? UI_THEME_LIGHT : UI_THEME_DARK;
-    if (argc > 6 && strcmp(argv[6], "camera") == 0) s->screen = UI_SCREEN_CAMERA;
-    if (argc > 6 && strcmp(argv[6], "gallery") == 0) { s->screen = UI_SCREEN_GALLERY; s->gal_count = 3; s->gal_index = 1; snprintf(s->cam_text, sizeof s->cam_text, "20260929-121500.jpg"); }
-    if (argc > 7 && strcmp(argv[7], "sleep") == 0) { s->sleeping = true; s->anim_tick = 37; }
-    else if (argc > 7 && strcmp(argv[7], "blink") == 0) s->blink = true;
-    else if (argc > 7) snprintf(s->toast, sizeof s->toast, "%s", argv[7]);
+    s->theme = UI_THEME_DARK;
+    s->screen = UI_SCREEN_FACE;
+    s->line_alpha = 255;
+    s->blush_alpha = 255;
+    s->online = true;
+    const char *face = "(—_—)", *line = NULL;
+    for (int i = 2; i < argc; i++) {
+        const char *a = argv[i];
+        #define ARG (i + 1 < argc ? argv[++i] : "")
+        if (!strcmp(a, "--port")) land = false;
+        else if (!strcmp(a, "--land")) land = true;
+        else if (!strcmp(a, "--light")) s->theme = UI_THEME_LIGHT;
+        else if (!strcmp(a, "--page")) {
+            const char *v = ARG;
+            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : UI_SCREEN_FACE;
+        }
+        else if (!strcmp(a, "--slide")) s->page_pos = atoi(ARG);
+        else if (!strcmp(a, "--panel")) { s->panel_pos = atoi(ARG); s->panel_open = s->panel_pos > 0; }
+        else if (!strcmp(a, "--epage")) s->emoji_page = atoi(ARG);
+        else if (!strcmp(a, "--face")) face = ARG;
+        else if (!strcmp(a, "--corner")) snprintf(s->corner, sizeof s->corner, "%s", ARG);
+        else if (!strcmp(a, "--line")) line = ARG;
+        else if (!strcmp(a, "--sleep")) { s->sleeping = true; s->anim_tick = 37; }
+        else if (!strcmp(a, "--tick")) s->anim_tick = atoi(ARG);
+        else if (!strcmp(a, "--blink")) s->blink = true;
+        else if (!strcmp(a, "--blush")) s->blush_alpha = atoi(ARG);
+        else if (!strcmp(a, "--toast")) snprintf(s->toast, sizeof s->toast, "%s", ARG);
+        else if (!strcmp(a, "--offline")) s->online = false;
+        else if (!strcmp(a, "--peek")) s->peek_on = true;
+        else if (!strcmp(a, "--pressed")) s->pressed = atoi(ARG);
+        else if (!strcmp(a, "--scroll")) s->scroll = atoi(ARG);
+        else if (!strcmp(a, "--few")) few = true;
+        else if (!strcmp(a, "--slidein")) s->slide_dy = atoi(ARG);
+        else { fprintf(stderr, "unknown option %s\n", a); return 1; }
+    }
+    int w = land ? 480 : 320, h = land ? 320 : 480;
+    static uint16_t fb[320 * 480];
+    gfx_init(fb, w, h);
+    snprintf(s->face, sizeof s->face, "%s", face);
 
     const char *tb[] = { "想你了", "抱抱", "在干嘛", "晚安" };
-    const char *eb[] = { "(´ω`)", "(≧▽≦)", "♡", "💧" };
-    for (int i = 0; i < 4; i++) { snprintf(s->text_btn[i].text, UI_BTN_TEXT_LEN, "%s", tb[i]); snprintf(s->emoji_btn[i].text, UI_BTN_TEXT_LEN, "%s", eb[i]); }
+    const char *eb[] = { "(—ω—)", "(—//—)", "(—▽—)♡", "(—ε—)", "(—_—)♡", "(—︵—)", "V(—ω—)V", "(—o—)", "(=ω=)", "(—∀-)" };
+    for (int i = 0; i < 4; i++) snprintf(s->text_btn[i].text, UI_BTN_TEXT_LEN, "%s", tb[i]);
+    for (int i = 0; i < 10; i++) snprintf(s->emoji_btn[i].text, UI_BTN_TEXT_LEN, "%s", eb[i]);
     s->text_btn_n = 4;
-    s->emoji_btn_n = 4;
-    s->pressed = UI_HIT_TEXT_BTN0 + 1;
+    s->emoji_btn_n = 10;
 
-    add(s, CHAT_KE, "早呀，今天天气不错。");
-    add(s, CHAT_HER, "想你了");
-    add(s, CHAT_KE, "我也想你。中午吃了什么？要不要一起出去散散步，公园的花开了。");
-    add(s, CHAT_HER, "(≧▽≦)");
-    add(s, CHAT_KE, "晚上给你打电话。");
-    s->blush_alpha = 255;
+    if (few) {
+        add(s, CHAT_KE, "(—ω—)", "早呀，今天天气不错。");
+        add(s, CHAT_HER, NULL, "想你了");
+    } else {
+        add(s, CHAT_KE, "(—ω—)", "早呀，今天天气不错。");
+        add(s, CHAT_HER, NULL, "想你了");
+        add(s, CHAT_KE, "(—▽—)♡", "我也想你。中午吃了什么？要不要一起出去散散步，公园的花开了。");
+        add(s, CHAT_HER, NULL, "(—ω—)");
+        add(s, CHAT_KE, "(—_—)♡", "晚上给你打电话。");
+        add(s, CHAT_HER, NULL, "好呀，等你");
+    }
+    if (line) add(s, CHAT_KE, face, line);
+    else if (!few && s->screen == UI_SCREEN_FACE) { /* face page shows the latest Ke line */ }
+    if (s->screen == UI_SCREEN_CHAT || s->page_pos > 0) { if (s->screen != UI_SCREEN_CAMERA && s->screen != UI_SCREEN_GALLERY) {} }
+    if (s->screen == UI_SCREEN_GALLERY) { s->gal_count = 3; s->gal_index = 1; snprintf(s->cam_text, sizeof s->cam_text, "20260929-121500.jpg"); }
     if (s->screen == UI_SCREEN_CAMERA) snprintf(s->cam_text, sizeof s->cam_text, "已保存 20260929-121500.jpg");
+    if (s->screen == UI_SCREEN_CHAT && s->page_pos == 0) s->page_pos = 255;
 
     ui_render(s);
 
@@ -62,11 +108,7 @@ int main(int argc, char **argv)
     fprintf(o, "P6\n%d %d\n255\n", w, h);
     for (int i = 0; i < w * h; i++) {
         uint16_t v = (uint16_t)((fb[i] << 8) | (fb[i] >> 8));
-        unsigned char px[3] = {
-            (unsigned char)(((v >> 11) & 31) * 255 / 31),
-            (unsigned char)(((v >> 5) & 63) * 255 / 63),
-            (unsigned char)((v & 31) * 255 / 31),
-        };
+        unsigned char px[3] = { (unsigned char)(((v >> 11) & 31) * 255 / 31), (unsigned char)(((v >> 5) & 63) * 255 / 63), (unsigned char)((v & 31) * 255 / 31) };
         fwrite(px, 1, 3, o);
     }
     fclose(o);

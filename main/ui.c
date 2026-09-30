@@ -3,8 +3,6 @@
 #include "gfx.h"
 #include "board.h"
 #include "settings.h"
-#include "audio.h"
-#include "bridge.h"
 #include "app_actions.h"
 
 #include <string.h>
@@ -24,16 +22,30 @@ static const char *TAG = "ui";
 
 #define BLUSH_FACE     "(—//—)"
 #define SLEEP_FACE     "(—_—)"
+#define NOTICE_FACE    "(—o—)"      /* the face flips to this for a second when a message arrives */
 #define KEY_ROTATE     "rotate"
 #define KEY_THEME      "theme"
 #define KEY_BUTTONS    "buttons"
-#define KEY_ANIM       "anim"
+#define KEY_ANIM       "anim"       /* master switch; per-animation keys are an_<name> */
 #define DEFAULT_ROTATION 90
 #define DEFAULT_THEME    UI_THEME_DARK
-#define DEFAULT_BUTTONS  "{\"text\":[\"想你了\",\"抱抱\",\"在干嘛\",\"晚安\"],\"emoji\":[\"(´ω`)\",\"(≧▽≦)\",\"♡\",\"💧\"],\"shake\":\"想你了\"}"
+#define DEFAULT_BUTTONS  "{\"text\":[\"想你了\",\"抱抱\",\"在干嘛\",\"晚安\"]," \
+    "\"emoji\":[\"(—ω—)\",\"(—//—)\",\"(—▽—)♡\",\"(—ε—)\",\"(—_—)♡\",\"(—︵—)\",\"V(—ω—)V\",\"(—o—)\",\"(=ω=)\",\"(—∀-)\"]," \
+    "\"shake\":\"想你了\"}"
 #define TICK_MS        50
 #define LONG_PRESS_MS  500
 #define DRAG_PX        10
+#define SWIPE_PX       40
+#define PAGE_STEP      58           /* page_pos per tick: ~220 ms for a full slide */
+#define PANEL_STEP     51           /* ~250 ms */
+#define NOTICE_MS      1000
+#define SLIDE_MS       250
+#define SLIDE_PX       44
+#define BLUSH_MS       2200
+
+enum { AN_BLINK, AN_BLUSH, AN_ZZZ, AN_SHAKE, AN_FLASH, AN_N };
+static const char *const AN_NAME[AN_N] = { "blink", "blush", "zzz", "shake", "flash" };
+static const bool AN_DEFAULT[AN_N] = { false, true, true, true, false };   /* no random blinking, no border flash */
 
 static SemaphoreHandle_t s_lock;      /* protects s_state and friends */
 static SemaphoreHandle_t s_fb_lock;   /* protects framebuffer + gfx dimensions */
@@ -45,19 +57,22 @@ static char s_override_face[UI_FACE_BUF];
 static char s_base_corner[48];
 static char s_override_corner[48];
 static char s_shake_text[UI_BTN_TEXT_LEN] = "想你了";
-static char s_buttons_json[1024] = DEFAULT_BUTTONS;
+static char s_buttons_json[BUTTONS_JSON_MAX] = DEFAULT_BUTTONS;
 static uint16_t *s_fb;
 static int s_rotation = DEFAULT_ROTATION;
-static bool s_anim = true;
+static bool s_anim_master = true;
+static bool s_an[AN_N];
 static esp_timer_handle_t s_tick_timer;
 
 /* animation state (ms countdowns, driven by the 50 ms tick) */
-static int s_blush_ms;          /* > 0 while blushing (total 2200 ms) */
+static int s_blush_ms;          /* > 0 while blushing */
 static int s_blink_ms;          /* > 0 while eyes closed */
 static int s_next_blink_ms;     /* countdown to next blink */
 static int s_shake_ms;
 static int s_flash_ms;
 static int s_toast_ms;
+static int s_notice_ms;         /* > 0 while the "message arrived" face is shown */
+static int s_slide_ms;          /* > 0 while the newest bubble slides in */
 static bool s_sleeping;
 
 /* touch state */
@@ -65,7 +80,7 @@ static bool s_down;
 static int s_down_x, s_down_y, s_last_y, s_last_x;
 static int64_t s_down_t;
 static int s_hit;               /* hit id at touch down */
-static bool s_dragging, s_long_fired;
+static bool s_dragging, s_long_fired, s_axis_v;
 
 /* ---- helpers --------------------------------------------------------------- */
 
@@ -89,14 +104,23 @@ static void copy_limited(char *dst, size_t dst_size, const char *src, int max_ch
     dst[out] = 0;
 }
 
+static float ease01(float t)
+{
+    t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+    return t * t * (3.f - 2.f * t);
+}
+
 static void lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
 static void mark_dirty(void) { xSemaphoreGive(s_dirty); }
 
+static bool an_on(int k) { return s_anim_master && s_an[k]; }
+
 /* recompute drawn face/corner from base + overrides; lock held */
 static void recompute(void)
 {
-    const char *face = s_override_face[0] ? s_override_face : (s_sleeping ? SLEEP_FACE : s_base_face);
+    const char *face = s_override_face[0] ? s_override_face
+                     : (s_notice_ms > 0 ? NOTICE_FACE : (s_sleeping ? SLEEP_FACE : s_base_face));
     strcpy(s_state->face, face);
     strcpy(s_state->corner, s_override_corner[0] ? s_override_corner : s_base_corner);
     s_state->sleeping = s_sleeping;
@@ -104,7 +128,7 @@ static void recompute(void)
 
 static void clamp_scroll(void)
 {
-    int max = ui_chat_content_height(s_state) - ui_chat_area_height();
+    int max = ui_chat_content_height(s_state) - ui_chat_area_height(s_state);
     if (max < 0) max = 0;
     if (s_state->scroll > max) s_state->scroll = max;
     if (s_state->scroll < 0) s_state->scroll = 0;
@@ -124,61 +148,109 @@ static void render_task(void *arg)
     }
 }
 
-/* 50 ms tick: drives blink / blush / shake / flash / toast / z animation */
+static int step_toward(int cur, int target, int step)
+{
+    if (cur < target) { cur += step; if (cur > target) cur = target; }
+    else if (cur > target) { cur -= step; if (cur < target) cur = target; }
+    return cur;
+}
+
+/* 50 ms tick: page / panel slides, bubble slide-in, fades, blush, shake, z's, blink, flash, toast */
 static void tick_cb(void *arg)
 {
     bool redraw = false;
     lock();
+
     if (s_toast_ms > 0) {
         s_toast_ms -= TICK_MS;
         if (s_toast_ms <= 0) { s_state->toast[0] = 0; redraw = true; }
     }
+
+    /* page slide: FACE <-> CHAT (the camera and gallery screens sit "after" the chat page) */
+    int page_target = s_state->screen == UI_SCREEN_FACE ? 0 : 255;
+    if (s_state->page_pos != page_target) {
+        s_state->page_pos = step_toward(s_state->page_pos, page_target, PAGE_STEP);
+        redraw = true;
+    }
+    int panel_target = s_state->panel_open ? 255 : 0;
+    if (s_state->panel_pos != panel_target) {
+        s_state->panel_pos = step_toward(s_state->panel_pos, panel_target, PANEL_STEP);
+        clamp_scroll();
+        redraw = true;
+    }
+
+    /* newest bubble slides in from below */
+    if (s_slide_ms > 0) {
+        s_slide_ms -= TICK_MS;
+        float prog = 1.f - (float)(s_slide_ms > 0 ? s_slide_ms : 0) / SLIDE_MS;
+        s_state->slide_dy = s_slide_ms > 0 ? (int)((1.f - ease01(prog)) * SLIDE_PX + 0.5f) : 0;
+        redraw = true;
+    }
+
+    /* the latest sentence on the face page fades in */
+    if (s_state->line_alpha < 255) {
+        s_state->line_alpha += 40;
+        if (s_state->line_alpha > 255) s_state->line_alpha = 255;
+        redraw = true;
+    }
+
+    /* "message arrived" face */
+    if (s_notice_ms > 0) {
+        s_notice_ms -= TICK_MS;
+        if (s_notice_ms <= 0) { recompute(); redraw = true; }
+    }
+
     if (s_flash_ms > 0) {
         s_flash_ms -= TICK_MS;
-        /* two 150 ms pulses within 600 ms */
-        int t = 600 - s_flash_ms;
+        int t = 600 - s_flash_ms;                 /* two 150 ms pulses within 600 ms */
         int in_pulse = (t < 150) ? t : (t >= 300 && t < 450) ? t - 300 : -1;
         s_state->flash = in_pulse < 0 ? 0 : (in_pulse < 75 ? in_pulse * 255 / 75 : (150 - in_pulse) * 255 / 75);
         if (s_flash_ms <= 0) s_state->flash = 0;
         redraw = true;
     }
+
     if (s_blush_ms > 0) {
         s_blush_ms -= TICK_MS;
-        int t = 2200 - s_blush_ms;            /* 0..2200 */
-        int a = t < 500 ? t * 255 / 500 : (t > 1500 ? (2200 - t) * 255 / 700 : 255);
+        int t = BLUSH_MS - s_blush_ms;            /* 0..BLUSH_MS */
+        int a = t < 500 ? t * 255 / 500 : (t > 1500 ? (BLUSH_MS - t) * 255 / 700 : 255);
         if (a < 0) a = 0;
-        s_state->blush_alpha = s_anim ? a : 255;
+        s_state->blush_alpha = an_on(AN_BLUSH) ? a : 255;
         if (s_blush_ms <= 0 && strcmp(s_override_face, BLUSH_FACE) == 0) {
             s_override_face[0] = 0;
+            s_state->blush_alpha = 255;
             recompute();
         }
-        redraw = s_anim || s_blush_ms <= 0;
+        redraw = an_on(AN_BLUSH) || s_blush_ms <= 0;
     }
-    if (s_anim) {
-        if (s_shake_ms > 0) {
-            s_shake_ms -= TICK_MS;
-            int t = 600 - s_shake_ms;
-            static const int pattern[] = { 8, -8, 6, -6, 4, -4, 2, -2, 0, 0, 0, 0 };
-            s_state->face_dx = s_shake_ms > 0 ? pattern[(t / TICK_MS) % 12] : 0;
+
+    if (s_shake_ms > 0) {
+        s_shake_ms -= TICK_MS;
+        int t = 600 - s_shake_ms;
+        static const int pattern[] = { 8, -8, 6, -6, 4, -4, 2, -2, 0, 0, 0, 0 };
+        s_state->face_dx = s_shake_ms > 0 ? pattern[(t / TICK_MS) % 12] : 0;
+        redraw = true;
+    }
+
+    /* random blink: off by default (she took it for a frozen screen) */
+    if (s_blink_ms > 0) {
+        s_blink_ms -= TICK_MS;
+        if (s_blink_ms <= 0) { s_state->blink = false; redraw = true; }
+    } else if (an_on(AN_BLINK) && s_state->screen == UI_SCREEN_FACE && s_state->page_pos == 0 &&
+               !s_sleeping && !s_override_face[0] && s_notice_ms <= 0) {
+        s_next_blink_ms -= TICK_MS;
+        if (s_next_blink_ms <= 0) {
+            s_state->blink = true;
+            s_blink_ms = 150;
+            s_next_blink_ms = 3000 + (int)(esp_random() % 10000);
             redraw = true;
         }
-        if (s_blink_ms > 0) {
-            s_blink_ms -= TICK_MS;
-            if (s_blink_ms <= 0) { s_state->blink = false; redraw = true; }
-        } else if (s_state->screen == UI_SCREEN_CHAT && !s_sleeping && !s_override_face[0]) {
-            s_next_blink_ms -= TICK_MS;
-            if (s_next_blink_ms <= 0) {
-                s_state->blink = true;
-                s_blink_ms = 150;
-                s_next_blink_ms = 3000 + (int)(esp_random() % 10000);
-                redraw = true;
-            }
-        }
-        if (s_sleeping && s_state->screen == UI_SCREEN_CHAT) {
-            s_state->anim_tick++;
-            if (s_state->anim_tick % 2 == 0) redraw = true;   /* 10 fps is plenty for z's */
-        }
     }
+
+    if (s_sleeping && s_state->anim_tick >= 0 && s_state->screen == UI_SCREEN_FACE) {
+        s_state->anim_tick++;
+        if (s_state->anim_tick % 2 == 0) redraw = true;      /* 10 fps is plenty for z's */
+    }
+
     unlock();
     if (redraw) mark_dirty();
 }
@@ -197,16 +269,16 @@ static esp_err_t apply_rotation(int rotation)
 
 /* ---- buttons config --------------------------------------------------------- */
 
-static void copy_btn_array(cJSON *arr, ui_button_t *out, int *n)
+static void copy_btn_array(cJSON *arr, ui_button_t *out, int *n, int max_n, int max_chars)
 {
     *n = 0;
     if (!cJSON_IsArray(arr)) return;
     cJSON *it;
     cJSON_ArrayForEach(it, arr) {
-        if (*n >= UI_MAX_BUTTONS) break;
+        if (*n >= max_n) break;
         if (cJSON_IsString(it) && it->valuestring[0]) {
-            copy_limited(out[*n].text, UI_BTN_TEXT_LEN, it->valuestring, 12);
-            (*n)++;
+            copy_limited(out[*n].text, UI_BTN_TEXT_LEN, it->valuestring, max_chars);
+            if (out[*n].text[0]) (*n)++;
         }
     }
 }
@@ -215,30 +287,39 @@ static bool parse_buttons(const char *json)
 {
     cJSON *root = cJSON_Parse(json);
     if (!root) return false;
-    ui_button_t tb[UI_MAX_BUTTONS], eb[UI_MAX_BUTTONS];
+    ui_button_t *tb = calloc(UI_MAX_TEXT_BTN, sizeof(ui_button_t));
+    ui_button_t *eb = calloc(UI_MAX_EMOJI_BTN, sizeof(ui_button_t));
+    if (!tb || !eb) { free(tb); free(eb); cJSON_Delete(root); return false; }
     int tn = 0, en = 0;
     char shake[UI_BTN_TEXT_LEN] = "想你了";
+    bool ok = true;
     if (cJSON_IsArray(root)) {
-        copy_btn_array(root, tb, &tn);
+        copy_btn_array(root, tb, &tn, UI_MAX_TEXT_BTN, UI_TEXT_BTN_CHARS);
     } else if (cJSON_IsObject(root)) {
-        copy_btn_array(cJSON_GetObjectItem(root, "text"), tb, &tn);
-        copy_btn_array(cJSON_GetObjectItem(root, "emoji"), eb, &en);
+        copy_btn_array(cJSON_GetObjectItem(root, "text"), tb, &tn, UI_MAX_TEXT_BTN, UI_TEXT_BTN_CHARS);
+        copy_btn_array(cJSON_GetObjectItem(root, "emoji"), eb, &en, UI_MAX_EMOJI_BTN, UI_EMOJI_BTN_CHARS);
         cJSON *sh = cJSON_GetObjectItem(root, "shake");
-        if (cJSON_IsString(sh) && sh->valuestring[0]) copy_limited(shake, sizeof shake, sh->valuestring, 12);
+        if (cJSON_IsString(sh) && sh->valuestring[0]) copy_limited(shake, sizeof shake, sh->valuestring, UI_TEXT_BTN_CHARS);
     } else {
-        cJSON_Delete(root);
-        return false;
+        ok = false;
     }
     cJSON_Delete(root);
-    if (tn == 0 && en == 0) return false;
-    lock();
-    memcpy(s_state->text_btn, tb, sizeof tb);
-    memcpy(s_state->emoji_btn, eb, sizeof eb);
-    s_state->text_btn_n = tn;
-    s_state->emoji_btn_n = en;
-    strcpy(s_shake_text, shake);
-    unlock();
-    return true;
+    if (ok && tn == 0 && en == 0) ok = false;
+    if (ok) {
+        lock();
+        memset(s_state->text_btn, 0, sizeof s_state->text_btn);
+        memset(s_state->emoji_btn, 0, sizeof s_state->emoji_btn);
+        memcpy(s_state->text_btn, tb, sizeof(ui_button_t) * (size_t)tn);
+        memcpy(s_state->emoji_btn, eb, sizeof(ui_button_t) * (size_t)en);
+        s_state->text_btn_n = tn;
+        s_state->emoji_btn_n = en;
+        if (s_state->emoji_page * ui_emoji_per_page() >= en) s_state->emoji_page = 0;
+        strcpy(s_shake_text, shake);
+        unlock();
+    }
+    free(tb);
+    free(eb);
+    return ok;
 }
 
 esp_err_t ui_set_buttons_json(const char *json)
@@ -251,8 +332,31 @@ esp_err_t ui_set_buttons_json(const char *json)
     return ESP_OK;
 }
 
+esp_err_t ui_reset_buttons(void)
+{
+    strcpy(s_buttons_json, DEFAULT_BUTTONS);
+    if (!parse_buttons(s_buttons_json)) return ESP_FAIL;
+    settings_erase(KEY_BUTTONS);
+    mark_dirty();
+    return ESP_OK;
+}
+
 const char *ui_get_buttons_json(void) { return s_buttons_json; }
 const char *ui_shake_text(void) { return s_shake_text; }
+
+bool ui_button_text(bool emoji, int index, char *out, size_t out_len)
+{
+    bool ok = false;
+    lock();
+    int n = emoji ? s_state->emoji_btn_n : s_state->text_btn_n;
+    if (index >= 0 && index < n) {
+        const char *t = emoji ? s_state->emoji_btn[index].text : s_state->text_btn[index].text;
+        snprintf(out, out_len, "%s", t);
+        ok = true;
+    }
+    unlock();
+    return ok;
+}
 
 /* ---- start ------------------------------------------------------------------ */
 
@@ -266,6 +370,9 @@ void ui_start(void)
     s_snap = heap_caps_calloc(1, sizeof(ui_state_t), MALLOC_CAP_SPIRAM);
     assert(s_fb && s_state && s_snap);
     s_state->pressed = UI_HIT_NONE;
+    s_state->screen = UI_SCREEN_FACE;
+    s_state->line_alpha = 255;
+    s_state->blush_alpha = 255;
 
     char buf[16];
     int rot = DEFAULT_ROTATION;
@@ -277,13 +384,20 @@ void ui_start(void)
     if (settings_get_str(KEY_THEME, buf, sizeof buf)) {
         if (strcmp(buf, "light") == 0) s_state->theme = UI_THEME_LIGHT;
     }
-    if (settings_get_str(KEY_ANIM, buf, sizeof buf)) s_anim = strcmp(buf, "off") != 0;
+    if (settings_get_str(KEY_ANIM, buf, sizeof buf)) s_anim_master = strcmp(buf, "off") != 0;
+    for (int k = 0; k < AN_N; k++) {
+        char key[16];
+        snprintf(key, sizeof key, "an_%s", AN_NAME[k]);
+        s_an[k] = AN_DEFAULT[k];
+        if (settings_get_str(key, buf, sizeof buf)) s_an[k] = strcmp(buf, "on") == 0;
+    }
+    s_state->anim_tick = an_on(AN_ZZZ) ? 0 : -1;
     if (!settings_get_str(KEY_BUTTONS, s_buttons_json, sizeof s_buttons_json) || !parse_buttons(s_buttons_json)) {
         strcpy(s_buttons_json, DEFAULT_BUTTONS);
         parse_buttons(s_buttons_json);
     }
     if (apply_rotation(rot) != ESP_OK) apply_rotation(0);
-    ESP_LOGI(TAG, "rotation %d, theme %s, anim %s", s_rotation, ui_get_theme(), s_anim ? "on" : "off");
+    ESP_LOGI(TAG, "rotation %d, theme %s, anim %s", s_rotation, ui_get_theme(), s_anim_master ? "on" : "off");
 
     strcpy(s_base_face, "(—_—)");
     recompute();
@@ -345,8 +459,8 @@ void ui_blush(void)
     lock();
     if (s_override_face[0] && strcmp(s_override_face, BLUSH_FACE) != 0) { unlock(); return; }
     strcpy(s_override_face, BLUSH_FACE);
-    s_blush_ms = 2200;
-    s_state->blush_alpha = s_anim ? 0 : 255;
+    s_blush_ms = BLUSH_MS;
+    s_state->blush_alpha = an_on(AN_BLUSH) ? 0 : 255;
     recompute();
     unlock();
     mark_dirty();
@@ -362,9 +476,13 @@ void ui_chat_add(chat_who_t who, const char *utf8)
         s_state->msg_count--;
     }
     chat_msg_t *m = &s_state->msgs[s_state->msg_count++];
+    memset(m, 0, sizeof *m);
     m->who = who;
+    if (who == CHAT_KE) strcpy(m->face, s_base_face);          /* the expression at the moment of sending */
     copy_limited(m->text, sizeof m->text, utf8, UI_SAY_MAX_CHARS);
     s_state->scroll = 0;
+    s_state->slide_dy = SLIDE_PX;                               /* slides in from below */
+    s_slide_ms = SLIDE_MS;
     unlock();
     mark_dirty();
 }
@@ -375,7 +493,15 @@ void ui_set_say(const char *utf8)
 {
     if (!utf8 || !utf8[0]) return;
     ui_chat_add(CHAT_KE, utf8);
-    ui_flash_border();
+    lock();
+    s_state->line_alpha = 0;                                    /* the line under the face fades in */
+    if (s_state->screen == UI_SCREEN_FACE && !s_sleeping) {     /* on the face page: the face looks up for a second */
+        s_notice_ms = NOTICE_MS;
+        recompute();
+    }
+    unlock();
+    mark_dirty();
+    ui_flash_border();                                          /* only does anything if the flash switch is on */
     app_on_new_message();
 }
 
@@ -393,6 +519,50 @@ void ui_scroll_by(int dy)
     lock();
     s_state->scroll += dy;
     clamp_scroll();
+    unlock();
+    mark_dirty();
+}
+
+void ui_set_online(bool online)
+{
+    lock();
+    bool changed = s_state->online != online;
+    s_state->online = online;
+    unlock();
+    if (changed) mark_dirty();
+}
+
+/* ---- pages and panel ---------------------------------------------------------- */
+
+void ui_go_page(ui_screen_t page)
+{
+    if (page != UI_SCREEN_FACE && page != UI_SCREEN_CHAT) return;
+    lock();
+    if (s_state->screen != page) {
+        s_state->screen = page;
+        s_state->pressed = UI_HIT_NONE;
+        if (page == UI_SCREEN_FACE) { s_state->panel_open = false; s_state->panel_pos = 0; }
+    }
+    unlock();
+    mark_dirty();
+}
+
+void ui_panel_set(bool open)
+{
+    lock();
+    if (s_state->screen == UI_SCREEN_CHAT) s_state->panel_open = open;
+    unlock();
+    mark_dirty();
+}
+
+bool ui_panel_is_open(void) { return s_state->panel_open; }
+
+void ui_emoji_page_step(int dir)
+{
+    lock();
+    int pages = ui_emoji_pages(s_state);
+    int p = s_state->emoji_page + dir;
+    if (p >= 0 && p < pages) s_state->emoji_page = p;
     unlock();
     mark_dirty();
 }
@@ -439,30 +609,63 @@ const char *ui_get_theme(void) { return s_state->theme == UI_THEME_LIGHT ? "ligh
 
 /* ---- animation ------------------------------------------------------------------ */
 
-void ui_set_anim(bool on)
+static void anim_after_change(void)
 {
-    lock();
-    s_anim = on;
-    if (!on) {
-        s_state->blink = false;
-        s_state->face_dx = 0;
-        s_state->blush_alpha = 255;
-        s_state->anim_tick = -1;
-    } else if (s_state->anim_tick < 0) {
-        s_state->anim_tick = 0;
-    }
-    unlock();
-    settings_set_str(KEY_ANIM, on ? "on" : "off");
-    mark_dirty();
+    /* lock held */
+    if (!an_on(AN_BLINK)) s_state->blink = false;
+    if (!an_on(AN_SHAKE)) { s_state->face_dx = 0; s_shake_ms = 0; }
+    if (!an_on(AN_FLASH)) { s_state->flash = 0; s_flash_ms = 0; }
+    s_state->anim_tick = an_on(AN_ZZZ) ? (s_state->anim_tick < 0 ? 0 : s_state->anim_tick) : -1;
+    if (!an_on(AN_BLUSH)) s_state->blush_alpha = 255;
 }
 
-bool ui_get_anim(void) { return s_anim; }
+bool ui_anim_set(const char *name, bool on)
+{
+    int k = -1;
+    bool master = !name || !strcmp(name, "all");
+    if (!master) {
+        for (int i = 0; i < AN_N; i++) if (!strcmp(name, AN_NAME[i])) k = i;
+        if (k < 0) return false;
+    }
+    lock();
+    if (master) s_anim_master = on; else s_an[k] = on;
+    anim_after_change();
+    unlock();
+    if (master) {
+        settings_set_str(KEY_ANIM, on ? "on" : "off");
+    } else {
+        char key[16];
+        snprintf(key, sizeof key, "an_%s", name);
+        settings_set_str(key, on ? "on" : "off");
+    }
+    mark_dirty();
+    return true;
+}
+
+bool ui_anim_get(const char *name, bool *on)
+{
+    if (!name || !strcmp(name, "all")) { *on = s_anim_master; return true; }
+    for (int i = 0; i < AN_N; i++) if (!strcmp(name, AN_NAME[i])) { *on = s_an[i]; return true; }
+    return false;
+}
+
+void ui_anim_status(char *out, size_t out_len)
+{
+    size_t n = (size_t)snprintf(out, out_len, "all %s", s_anim_master ? "on" : "off");
+    for (int i = 0; i < AN_N && n < out_len; i++) {
+        n += (size_t)snprintf(out + n, out_len - n, ", %s %s", AN_NAME[i], s_an[i] ? "on" : "off");
+    }
+}
+
+void ui_set_anim(bool on) { ui_anim_set("all", on); }
+bool ui_get_anim(void) { return s_anim_master; }
 
 void ui_set_sleeping(bool on)
 {
     lock();
     s_sleeping = on;
-    if (!s_anim) s_state->anim_tick = -1;
+    if (!an_on(AN_ZZZ)) s_state->anim_tick = -1;
+    else if (s_state->anim_tick < 0) s_state->anim_tick = 0;
     recompute();
     unlock();
     mark_dirty();
@@ -472,16 +675,15 @@ bool ui_is_sleeping(void) { return s_sleeping; }
 
 void ui_shake(void)
 {
-    if (!s_anim) return;
     lock();
-    s_shake_ms = 600;
+    if (an_on(AN_SHAKE)) s_shake_ms = 600;
     unlock();
 }
 
 void ui_flash_border(void)
 {
     lock();
-    s_flash_ms = 600;
+    if (an_on(AN_FLASH)) s_flash_ms = 600;
     unlock();
 }
 
@@ -502,6 +704,9 @@ void ui_set_screen(ui_screen_t screen)
     s_state->pressed = UI_HIT_NONE;
     s_state->frame = NULL;
     s_state->cam_text[0] = 0;
+    /* immediate: no slide when coming back from the camera */
+    s_state->page_pos = screen == UI_SCREEN_FACE ? 0 : 255;
+    if (screen != UI_SCREEN_CHAT) { s_state->panel_open = false; s_state->panel_pos = 0; }
     unlock();
     mark_dirty();
 }
@@ -547,8 +752,56 @@ void ui_get_state_copy(ui_state_t *out)
 static void set_pressed(int id)
 {
     lock();
-    if (s_state->pressed != id) { s_state->pressed = id; unlock(); mark_dirty(); }
-    else unlock();
+    bool changed = s_state->pressed != id;
+    s_state->pressed = id;
+    unlock();
+    if (changed) mark_dirty();
+}
+
+/* Taps that only change the UI itself. Returns false if the app has to handle the tap. */
+static bool handle_tap_in_ui(int hit)
+{
+    switch (hit) {
+    case UI_HIT_HINT:     ui_go_page(UI_SCREEN_CHAT); return true;
+    case UI_HIT_TOP_BACK: ui_go_page(UI_SCREEN_FACE); return true;
+    case UI_HIT_PLUS:     ui_panel_set(!ui_panel_is_open()); return true;
+    case UI_HIT_PANEL:
+    case UI_HIT_TOPBAR:   return true;
+    case UI_HIT_CHAT:                                            /* blank space above an open panel closes it */
+        if (ui_panel_is_open()) ui_panel_set(false);
+        return true;
+    default:              return false;
+    }
+}
+
+static bool is_pressable(int hit)
+{
+    return hit >= UI_HIT_TEXT_BTN0 || hit == UI_HIT_CAM_BTN || hit == UI_HIT_CAM_GALLERY || hit == UI_HIT_CAM_BACK ||
+           hit == UI_HIT_GAL_DELETE || hit == UI_HIT_GAL_SEND || hit == UI_HIT_HINT || hit == UI_HIT_TOP_BACK ||
+           hit == UI_HIT_PLUS;
+}
+
+static void handle_swipe(bool vertical, int total_dx, int total_dy)
+{
+    ui_screen_t scr;
+    bool overflow;
+    lock();
+    scr = s_state->screen;
+    overflow = ui_chat_content_height(s_state) > ui_chat_area_height(s_state);
+    unlock();
+
+    if (vertical) {
+        if (scr == UI_SCREEN_FACE && total_dy <= -SWIPE_PX) {
+            ui_go_page(UI_SCREEN_CHAT);                          /* swipe up: open the chat */
+        } else if (scr == UI_SCREEN_CHAT && total_dy >= SWIPE_PX &&
+                   (s_hit == UI_HIT_TOPBAR || s_hit == UI_HIT_TOP_BACK || (s_hit == UI_HIT_CHAT && !overflow))) {
+            ui_go_page(UI_SCREEN_FACE);                          /* swipe down from the top bar (or on a short chat) */
+        }
+    } else if (abs(total_dx) > SWIPE_PX) {
+        int dir = total_dx < 0 ? 1 : -1;
+        if (scr == UI_SCREEN_GALLERY && s_hit == UI_HIT_GAL_VIEW) app_on_swipe(dir);
+        else if (scr == UI_SCREEN_CHAT && (s_hit == UI_HIT_PANEL || s_hit >= UI_HIT_EMOJI_BTN0)) ui_emoji_page_step(dir);
+    }
 }
 
 void ui_touch(bool down, int x, int y)
@@ -564,10 +817,7 @@ void ui_touch(bool down, int x, int y)
         lock();
         s_hit = ui_hit_test(s_state, x, y);
         unlock();
-        if (s_hit >= UI_HIT_TEXT_BTN0 || s_hit == UI_HIT_CAM_BTN || s_hit == UI_HIT_CAM_GALLERY ||
-            s_hit == UI_HIT_CAM_BACK || s_hit == UI_HIT_GAL_DELETE || s_hit == UI_HIT_GAL_SEND) {
-            set_pressed(s_hit);
-        }
+        if (is_pressable(s_hit)) set_pressed(s_hit);
         app_on_touch_activity();
         return;
     }
@@ -575,16 +825,16 @@ void ui_touch(bool down, int x, int y)
         int dx = x - s_down_x, dy = y - s_down_y;
         if (!s_dragging && (abs(dx) > DRAG_PX || abs(dy) > DRAG_PX)) {
             s_dragging = true;
+            s_axis_v = abs(dy) >= abs(dx);
             set_pressed(UI_HIT_NONE);
         }
-        if (s_dragging && s_hit == UI_HIT_CHAT) {
-            /* content follows the finger: dragging down reveals older messages
-             * (draw_chat shifts the messages down as scroll grows) */
+        if (s_dragging && s_axis_v && s_hit == UI_HIT_CHAT) {
+            /* content follows the finger: dragging down reveals older messages */
             ui_scroll_by(y - s_last_y);
         }
         s_last_x = x;
         s_last_y = y;
-        /* long press on face / chat / camera view: talk */
+        /* long press on the face / message area: talk */
         if (!s_dragging && !s_long_fired && (s_hit == UI_HIT_FACE || s_hit == UI_HIT_CHAT) &&
             now - s_down_t >= (int64_t)LONG_PRESS_MS * 1000) {
             s_long_fired = true;
@@ -595,22 +845,20 @@ void ui_touch(bool down, int x, int y)
     if (!down && s_down) {
         s_down = false;
         set_pressed(UI_HIT_NONE);
-        int total_dx = s_last_x - s_down_x;
         if (s_long_fired) {
             app_on_long_release();
             return;
         }
         if (s_dragging) {
-            if (s_hit == UI_HIT_GAL_VIEW && abs(total_dx) > 40) app_on_swipe(total_dx < 0 ? 1 : -1);
+            handle_swipe(s_axis_v, s_last_x - s_down_x, s_last_y - s_down_y);
             return;
         }
-        /* tap. The touch controller reports no coordinates once the finger is up, so the
-         * caller's x,y are meaningless here: test with the last position seen while it
-         * was down (same source as s_hit, so a plain tap always matches). */
+        /* tap. The touch controller reports no coordinates once the finger is up, so the caller's
+         * x,y are meaningless here: test with the last position seen while it was down. */
         lock();
         int hit_up = ui_hit_test(s_state, s_last_x, s_last_y);
         unlock();
         if (hit_up != s_hit) return;
-        app_on_tap(s_hit);
+        if (!handle_tap_in_ui(s_hit)) app_on_tap(s_hit);
     }
 }

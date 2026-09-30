@@ -2,8 +2,11 @@
 #pragma once
 #include "kb_font.h"
 
+extern const kb_font_t kb_font_face96;
 extern const kb_font_t kb_font_face64;
 extern const kb_font_t kb_font_face44;
 extern const kb_font_t kb_font_face30;
+extern const kb_font_t kb_font_face18;
+extern const kb_font_t kb_font_face13;
 extern const kb_font_t kb_font_text22;
 extern const kb_font_t kb_font_small14;

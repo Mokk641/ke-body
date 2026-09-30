@@ -133,8 +133,29 @@ void bridge_send_photo(const uint8_t *jpeg, size_t len)
     enqueue(1, jpeg, len);
 }
 
+/* Every 15 s: GET /ping on the bridge -> green/grey dot in the chat top bar. */
+static void probe_task(void *arg)
+{
+    bool last = false, first = true;
+    for (;;) {
+        bool ok = false;
+        char url[200];
+        if (wifi_mgr_state() == WIFI_MGR_CONNECTED && bridge_url("ping", url, sizeof url)) {
+            esp_http_client_config_t cfg = { .url = url, .method = HTTP_METHOD_GET, .timeout_ms = 2500 };
+            esp_http_client_handle_t c = esp_http_client_init(&cfg);
+            if (c) {
+                ok = esp_http_client_perform(c) == ESP_OK && esp_http_client_get_status_code(c) / 100 == 2;
+                esp_http_client_cleanup(c);
+            }
+        }
+        if (first || ok != last) { ui_set_online(ok); last = ok; first = false; }
+        vTaskDelay(pdMS_TO_TICKS(15000));
+    }
+}
+
 void bridge_start(void)
 {
     s_q = xQueueCreate(6, sizeof(job_t));
     xTaskCreate(worker, "bridge", 5120, NULL, 3, NULL);
+    xTaskCreate(probe_task, "bridge_probe", 4096, NULL, 2, NULL);
 }

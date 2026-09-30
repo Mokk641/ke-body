@@ -83,13 +83,15 @@ static esp_err_t heard_post(httpd_req_t *req)
 
 static esp_err_t buttons_post(httpd_req_t *req)
 {
-    char body[1024];
-    int n = read_body(req, body, sizeof body);
-    if (n < 0) return ESP_FAIL;
-    esp_err_t err = ui_set_buttons_json(body);
+    char *body = malloc(BUTTONS_JSON_MAX + 1);
+    if (!body) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    int n = read_body(req, body, BUTTONS_JSON_MAX + 1);
+    if (n < 0) { free(body); return ESP_FAIL; }
+    esp_err_t err = (strcmp(body, "reset") == 0) ? ui_reset_buttons() : ui_set_buttons_json(body);
+    free(body);
     if (err != ESP_OK) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-            "expect JSON: {\"text\":[\"想你了\",...],\"emoji\":[\"♡\",...],\"shake\":\"想你了\"} (max 8 each, 12 chars, <1KB)");
+            "expect JSON: {\"text\":[\"想你了\",...],\"emoji\":[\"♡\",...],\"shake\":\"想你了\"} (max 8 phrases / 30 emoji, <2KB) or the word reset");
     }
     ESP_LOGI(TAG, "buttons updated");
     return ok(req);
@@ -143,12 +145,25 @@ static esp_err_t snap_handler(httpd_req_t *req)
     return err;
 }
 
+/* body: "on" | "off" (master), "<name> on|off" (blink blush zzz shake flash), "status" */
 static esp_err_t anim_post(httpd_req_t *req)
 {
-    char body[16];
+    char body[48];
     if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
-    if (strcmp(body, "on") && strcmp(body, "off")) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "anim must be on or off");
-    ui_set_anim(strcmp(body, "on") == 0);
+    if (strcmp(body, "status") == 0) {
+        char st[128];
+        ui_anim_status(st, sizeof st);
+        return httpd_resp_sendstr(req, st);
+    }
+    char name[16] = "all", val[8];
+    if (sscanf(body, "%15s %7s", name, val) != 2) {
+        snprintf(val, sizeof val, "%.7s", body);
+        snprintf(name, sizeof name, "all");
+    }
+    if (strcmp(val, "on") && strcmp(val, "off"))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body: on|off  or  <blink|blush|zzz|shake|flash> on|off");
+    if (!ui_anim_set(name, strcmp(val, "on") == 0))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown animation (blink blush zzz shake flash all)");
     return ok(req);
 }
 

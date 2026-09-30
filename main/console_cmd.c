@@ -184,16 +184,26 @@ static int cmd_msg(int argc, char **argv)
 
 static int cmd_buttons(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "reset") == 0) {
+        ui_reset_buttons();
+        printf("buttons reset to defaults\n");
+    }
     printf("%s\n", ui_get_buttons_json());
     return 0;
 }
 
 static int cmd_anim(int argc, char **argv)
 {
-    if (argc == 1) { printf("anim: %s\n", ui_get_anim() ? "on" : "off"); return 0; }
-    if (strcmp(argv[1], "on") && strcmp(argv[1], "off")) { printf("usage: anim on|off\n"); return 1; }
-    ui_set_anim(strcmp(argv[1], "on") == 0);
-    printf("anim: %s (saved)\n", argv[1]);
+    char st[128];
+    if (argc == 1) { ui_anim_status(st, sizeof st); printf("anim: %s\n", st); return 0; }
+    const char *name = argc >= 3 ? argv[1] : "all";
+    const char *val = argc >= 3 ? argv[2] : argv[1];
+    if ((strcmp(val, "on") && strcmp(val, "off")) || !ui_anim_set(name, strcmp(val, "on") == 0)) {
+        printf("usage: anim [blink|blush|zzz|shake|flash] on|off\n");
+        return 1;
+    }
+    ui_anim_status(st, sizeof st);
+    printf("anim: %s (saved)\n", st);
     return 0;
 }
 
@@ -444,8 +454,8 @@ esp_err_t console_cmd_start(void)
         { .command = "audio",    .help = "audio test [ms] [rate] | audio mic [ms] | audio slot mono|stereo | audio regs | audio gain <0-7>", .func = cmd_audio },
         { .command = "gpio",     .help = "gpio <n> 0|1|in   (drive a free ESP32 pin, amplifier-enable hunting)", .func = cmd_gpio },
         { .command = "msg",      .help = "msg <text>   send like a quick button (chat + bridge /msg)", .func = cmd_msg },
-        { .command = "buttons",  .help = "show the quick-button config JSON", .func = cmd_buttons },
-        { .command = "anim",     .help = "anim on|off (saved)", .func = cmd_anim },
+        { .command = "buttons",  .help = "buttons [reset]  show the quick-button config JSON / restore defaults", .func = cmd_buttons },
+        { .command = "anim",     .help = "anim [blink|blush|zzz|shake|flash] on|off  (no name = all; saved)", .func = cmd_anim },
         { .command = "chime",    .help = "chime on|off  soft tone on new message (saved)", .func = cmd_chime },
         { .command = "imu",      .help = "imu | imu invert on|off   (accelerometer)", .func = cmd_imu },
         { .command = "autorotate", .help = "autorotate on|off (saved, default off)", .func = cmd_autorotate },

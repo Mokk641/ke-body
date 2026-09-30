@@ -61,6 +61,20 @@ def gb2312_hanzi():
 STATUS_CJK = ("等待配网连接中无网络已断开未错误重试在听发送失败播放录音"
               "相机册删除寄给克返回拍照存请插卡张让看没有片到内部成功正睡觉摇一下想你了抱在干嘛晚安眼睛远程模式")  # corner status words
 
+def source_cjk():
+    """Every CJK ideograph that appears in the firmware sources (main/*.c, *.h, *.cpp),
+    so any label drawn with the small font always has its glyph."""
+    chars = set()
+    src = os.path.join(HERE, "..", "main")
+    for fn in sorted(os.listdir(src)):
+        if fn.endswith((".c", ".h", ".cpp")):
+            with open(os.path.join(src, fn), encoding="utf-8") as f:
+                for ch in f.read():
+                    if "\u4e00" <= ch <= "\u9fff":
+                        chars.add(ch)
+    return "".join(sorted(chars))
+
+
 # --- helpers ----------------------------------------------------------------
 
 _cmap_cache = {}
@@ -261,11 +275,14 @@ def main():
     cjk_first = [WQY, DEJAVU, UNIFONT]
 
     fonts = [
+        build_font("face96", 96, face_chars, latin_first),   # big face on the face page
         build_font("face64", 64, face_chars, latin_first),
         build_font("face44", 44, face_chars, latin_first),
         build_font("face30", 30, face_chars, latin_first),
+        build_font("face18", 18, face_chars, latin_first),   # chat avatar / top bar / emoji grid
+        build_font("face13", 13, face_chars, latin_first),
         build_font("text22", 22, ASCII + CJK_PUNCT + FULLWIDTH_DIGITS + KAOMOJI + gb2312_hanzi(), cjk_first),
-        build_font("small14", 14, ASCII + STATUS_CJK + CJK_PUNCT, cjk_first),
+        build_font("small14", 14, ASCII + STATUS_CJK + source_cjk() + CJK_PUNCT, cjk_first),
     ]
     for f in fonts:
         emit_c(f)

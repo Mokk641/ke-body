@@ -1,5 +1,5 @@
-/* Tiny software renderer: RGB565 framebuffer, filled shapes, 4bpp AA text.
- * Pure C, no ESP-IDF dependency, so it can be compiled on the host too. */
+/* Tiny software renderer: RGB565 framebuffer, anti-aliased shapes, 4bpp AA text.
+ * Pure C (needs libm), no ESP-IDF dependency, so it also builds on the host. */
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
@@ -14,15 +14,22 @@ int gfx_width(void);
 int gfx_height(void);
 uint16_t *gfx_fb(void);
 
-/* Clip rectangle for all drawing (default: whole screen). */
+/* Origin: every drawing call below is translated by (ox, oy). Used to slide a page
+ * or a panel across the screen. gfx_init() resets it to (0,0). */
+void gfx_set_origin(int ox, int oy);
+
+/* Clip rectangle, given in the current origin's coordinates (default: whole screen).
+ * Changing the origin afterwards does not move an already set clip. */
 void gfx_set_clip(int x, int y, int w, int h);
 void gfx_clear_clip(void);
 
-void gfx_fill(uint16_t color);
+void gfx_fill(uint16_t color);                       /* whole framebuffer, ignores origin and clip */
 void gfx_fill_rect(int x, int y, int w, int h, uint16_t color);
-void gfx_fill_round_rect(int x, int y, int w, int h, int r, uint16_t color);
-void gfx_draw_round_rect(int x, int y, int w, int h, int r, int thickness, uint16_t color);
-void gfx_fill_circle(int cx, int cy, int r, uint16_t color);
+void gfx_fill_round_rect(int x, int y, int w, int h, int r, uint16_t color);          /* anti-aliased */
+void gfx_draw_round_rect(int x, int y, int w, int h, int r, int thickness, uint16_t color);  /* anti-aliased outline */
+void gfx_fill_circle(int cx, int cy, int r, uint16_t color);                          /* anti-aliased */
+void gfx_ring(float cx, float cy, float r, float thickness, uint16_t color);          /* anti-aliased circle outline */
+void gfx_line(float x0, float y0, float x1, float y1, float width, uint16_t color);   /* anti-aliased, round caps */
 
 /* Copy a byte-swapped RGB565 image (same format as the framebuffer) to x,y; clipped. */
 void gfx_blit(int x, int y, const uint16_t *src, int src_w, int src_h);
@@ -36,6 +43,14 @@ int gfx_text_width_n(const kb_font_t *f, const char *utf8, int len);
 void gfx_draw_text(const kb_font_t *f, int x, int y, const char *utf8, uint16_t color);
 void gfx_draw_text_n(const kb_font_t *f, int x, int y, const char *utf8, int len, uint16_t color);
 void gfx_draw_text_centered(const kb_font_t *f, int cx, int y, const char *utf8, uint16_t color);
+
+/* Byte length of the longest prefix of utf8 (whole characters) that is at most max_w wide. */
+int gfx_fit_len(const kb_font_t *f, const char *utf8, int max_w);
+
+/* Does the font have a real glyph for cp? Missing glyphs are drawn as an empty box. */
+bool gfx_has_glyph(const kb_font_t *f, uint32_t cp);
+/* Number of characters of utf8 that the font has no glyph for (spaces and controls excluded). */
+int gfx_missing_glyphs(const kb_font_t *f, const char *utf8);
 
 /* Greedy per-character word wrap. Fills `lines` with (start,len) byte ranges
  * into utf8. Returns the number of lines (capped at max_lines; when capped the
