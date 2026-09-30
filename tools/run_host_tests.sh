@@ -51,3 +51,8 @@ echo
 echo "== mp3 decoder =="
 gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_mp3" tools/test_mp3.c main/mp3src.c -lm
 "$OUT/test_mp3" tools/testdata
+
+echo
+echo "== recording gain =="
+gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_agc" tools/test_agc.c main/agc.c -lm
+"$OUT/test_agc"

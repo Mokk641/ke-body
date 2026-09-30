@@ -213,6 +213,17 @@ static esp_err_t music_post(httpd_req_t *req)
     return ok(req);
 }
 
+/* POST /mic: body = gain in dB (0..60); GET-less on purpose, `mic` on the serial console shows the value */
+static esp_err_t mic_post(httpd_req_t *req)
+{
+    char body[16];
+    if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
+    char *end;
+    long db = strtol(body, &end, 10);
+    if (end == body || audio_set_mic_db((int)db) != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body: gain in dB, 0-60");
+    return ok(req);
+}
+
 static esp_err_t buttons_post(httpd_req_t *req)
 {
     char *body = malloc(BUTTONS_JSON_MAX + 1);
@@ -416,6 +427,7 @@ esp_err_t http_api_start(void)
         { .uri = "/ink",    .method = HTTP_POST, .handler = ink_post },
         { .uri = "/image",  .method = HTTP_POST, .handler = image_post },
         { .uri = "/music",  .method = HTTP_POST, .handler = music_post },
+        { .uri = "/mic",    .method = HTTP_POST, .handler = mic_post },
         { .uri = "/buttons", .method = HTTP_POST, .handler = buttons_post },
         { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
         { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },

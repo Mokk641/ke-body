@@ -217,6 +217,18 @@ static int cmd_colortest(int argc, char **argv)
     return 0;
 }
 
+static int cmd_mic(int argc, char **argv)
+{
+    if (argc == 1 || (argc == 2 && !strcmp(argv[1], "gain"))) { printf("mic gain: %d dB (analog up to 42 dB, the rest digital; the recording is then normalised to peak 0.8)\n", audio_get_mic_db()); return 0; }
+    if (argc == 3 && !strcmp(argv[1], "gain")) {
+        if (audio_set_mic_db(atoi(argv[2])) != ESP_OK) { printf("mic gain: 0-60 dB\n"); return 1; }
+        printf("mic gain: %d dB (saved)\n", audio_get_mic_db());
+        return 0;
+    }
+    printf("usage: mic gain <0-60 dB>\n");
+    return 1;
+}
+
 static int cmd_music(int argc, char **argv)
 {
     if (argc == 1 || (argc == 2 && !strcmp(argv[1], "list"))) {
@@ -570,6 +582,7 @@ esp_err_t console_cmd_start(void)
         { .command = "colortest", .help = "show swatches with their #RRGGBB to compare with a phone", .func = cmd_colortest },
         { .command = "touchrange", .help = "touchrange [reset]  smallest / largest raw touch values seen (dead panel edges?)", .func = cmd_touchrange },
         { .command = "touchcal", .help = "touchcal [xmin xmax ymin ymax | reset]  stretch the panel's real touch area to the screen (saved)", .func = cmd_touchcal },
+        { .command = "mic",      .help = "mic gain <0-60 dB>  microphone gain for recordings (saved)", .func = cmd_mic },
         { .command = "music",    .help = "music [list|play <n>|pause|next|prev|stop|rescan]  the MP3 player (files in /sdcard/MUSIC)", .func = cmd_music },
         { .command = "buttons",  .help = "buttons [reset]  show the quick-button config JSON / restore defaults", .func = cmd_buttons },
         { .command = "anim",     .help = "anim [blink|blush|zzz|shake|flash] on|off  (no name = all; saved)", .func = cmd_anim },

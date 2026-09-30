@@ -20,6 +20,7 @@ ke_send.py - send things to the ke-body board.
     ke_send.py ink his_note.png        # Ke's handwriting (PNG): shows on his side of the chat, white ink
     ke_send.py image photo.jpg         # a picture (JPEG/PNG), shrunk to the screen size first; tap it on the board to see it full screen
     ke_send.py music song.mp3 [title]  # push a song: it starts playing at once and appears at the top of the list
+    ke_send.py mic 42                  # microphone gain in dB (0-60) for push-to-talk recordings
     ke_send.py ping
 
 The board address comes from --board or the KE_BOARD environment variable
@@ -140,6 +141,7 @@ def main():
     sub.add_parser("volume").add_argument("level", type=int)
     sub.add_parser("rotate").add_argument("degrees", type=int, choices=[0, 90, 180, 270])
     sub.add_parser("brightness").add_argument("level", type=int)
+    sub.add_parser("mic").add_argument("db", type=int, help="microphone gain in dB, 0-60")
     sub.add_parser("theme").add_argument("name", choices=["light", "dark", "auto"])
     sub.add_parser("ink").add_argument("file", help="PNG of handwriting (any colours; the board shows it as white ink)")
     sub.add_parser("image").add_argument("file", help="JPEG or PNG")
@@ -174,6 +176,8 @@ def main():
             code, text = request(args.board, "/brightness", str(args.level).encode())
         elif args.cmd == "theme":
             code, text = request(args.board, "/theme", args.name.encode())
+        elif args.cmd == "mic":
+            code, text = request(args.board, "/mic", str(args.db).encode())
         elif args.cmd == "ink":
             with open(args.file, "rb") as f:
                 data = f.read()

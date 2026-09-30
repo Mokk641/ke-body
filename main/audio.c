@@ -15,6 +15,7 @@
 #include "audio.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -27,6 +28,8 @@
 #include <stdio.h>
 #include "es8311.h"
 #include "board.h"
+#include "settings.h"
+#include "agc.h"
 
 static const char *TAG = "audio";
 
@@ -37,7 +40,7 @@ static const char *TAG = "audio";
 #define PIN_I2S_DIN   GPIO_NUM_14   /* codec ADC -> ESP32 */
 #define ES8311_ADDR   ES8311_ADDRESS_0
 #define MCLK_MULTIPLE 256
-#define MIC_GAIN      ES8311_MIC_GAIN_30DB
+static int s_mic_db = AUDIO_DEFAULT_MIC_DB;
 
 #define FRAMES_PER_CHUNK 256                       /* 16 ms @ 16 kHz */
 #define CHUNK_BYTES      (FRAMES_PER_CHUNK * 2 * 2) /* stereo int16 */
@@ -203,7 +206,11 @@ static esp_err_t codec_init(i2c_master_bus_handle_t bus)
     }
     ESP_RETURN_ON_ERROR(apply_volume(s_volume), TAG, "volume");
     ESP_RETURN_ON_ERROR(es8311_microphone_config(s_codec, false), TAG, "mic");
-    ESP_RETURN_ON_ERROR(es8311_microphone_gain_set(s_codec, MIC_GAIN), TAG, "mic gain");
+    {
+        char b[8];
+        if (settings_get_str("mic_db", b, sizeof b)) s_mic_db = atoi(b);
+        ESP_RETURN_ON_ERROR(audio_set_mic_db(s_mic_db), TAG, "mic gain");
+    }
     uint8_t id1 = 0, id2 = 0, ver = 0;
     es8311_read_register(s_codec, 0xFD, &id1);
     es8311_read_register(s_codec, 0xFE, &id2);
@@ -237,9 +244,11 @@ static void do_record(void)
         if (i2s_channel_read(s_rx, s_chunk, CHUNK_BYTES, &got, 0) != ESP_OK) break;
     }
 
+    int lvl_peak = 0, lvl_chunks = 0;
     while (!s_stop_rec && n < REC_MAX_SAMPLES) {
         if (i2s_channel_read(s_rx, s_chunk, CHUNK_BYTES, &got, pdMS_TO_TICKS(200)) != ESP_OK) continue;
         size_t frames = got / frame_bytes();
+        size_t n_before = n;
         for (size_t i = 0; i < frames && n < REC_MAX_SAMPLES; i++) {
             if (s_mono) {
                 pcm[n++] = s_chunk[i];
@@ -248,8 +257,21 @@ static void do_record(void)
                 pcm[n++] = (int16_t)(((int)s_chunk[2 * i] + (int)s_chunk[2 * i + 1]) / 2);
             }
         }
+        for (size_t i = n_before; i < n; i++) { int v = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (v > lvl_peak) lvl_peak = v; }
+        if (++lvl_chunks >= 3 && s_cb) {                        /* ~20 times a second: loudness for the bar on the screen */
+            s_cb(AUDIO_EVT_REC_LEVEL, NULL, agc_level(lvl_peak));
+            lvl_peak = 0;
+            lvl_chunks = 0;
+        }
     }
     s_recording = false;
+    /* simple automatic gain: bring the loudest sample to ~0.8 of full scale (a quiet voice recorded with a low peak is
+     * hard for speech recognition), never more than +28 dB and never turning the volume down */
+    {
+        float g = agc_apply(pcm, n, 0.8f, 25.0f, 60);
+        ESP_LOGI(TAG, "recording normalised, gain x%.1f", g);
+    }
+    if (s_cb) s_cb(AUDIO_EVT_REC_LEVEL, NULL, 0);
     wav_write_header(s_rec_buf, AUDIO_REC_RATE, 1, (uint32_t)(n * 2));
     ESP_LOGI(TAG, "recorded %u samples (%.1f s)", (unsigned)n, (double)n / AUDIO_REC_RATE);
     if (s_cb) s_cb(AUDIO_EVT_REC_DONE, s_rec_buf, WAV_HDR + n * 2);
@@ -593,6 +615,25 @@ void audio_dump_regs(void)
     printf("  chip id %02x %02x (expect 83 11), version %02x\n", a, b, cver);
     printf("  meaning: 0D/0E analog power, 12 DAC power (00=on), 13 HP drive (10=on), 14 mic, 31 mute, 32 DAC volume\n");
 }
+
+esp_err_t audio_set_mic_db(int db)
+{
+    if (!s_codec) return ESP_ERR_INVALID_STATE;
+    if (db < 0) db = 0;
+    if (db > 60) db = 60;
+    int step = db / 6 > 7 ? 7 : db / 6;
+    int rest = db - 6 * step;                                  /* dB left for the digital volume, 0.5 dB per step */
+    ESP_RETURN_ON_ERROR(es8311_microphone_gain_set(s_codec, (es8311_mic_gain_t)step), TAG, "mic gain");
+    int reg = 0xBF + 2 * rest;
+    ESP_RETURN_ON_ERROR(es8311_write_register(s_codec, 0x17, (uint8_t)(reg > 0xFF ? 0xFF : reg)), TAG, "adc volume");
+    s_mic_db = db;
+    char b[8];
+    snprintf(b, sizeof b, "%d", db);
+    settings_set_str("mic_db", b);
+    return ESP_OK;
+}
+
+int audio_get_mic_db(void) { return s_mic_db; }
 
 esp_err_t audio_set_mic_gain(int step)
 {

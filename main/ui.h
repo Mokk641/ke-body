@@ -62,6 +62,7 @@ void ui_set_sleeping(bool on);         /* face-down: sleep face + z's */
 bool ui_is_sleeping(void);
 void ui_shake(void);                   /* face wobbles left/right briefly */
 void ui_flash_border(void);            /* optional silent alert: two soft border flashes (only if the flash switch is on) */
+void ui_set_mic_level(int level);      /* recording loudness 0..100 (a bar along the top edge of the screen); -1 = off */
 void ui_set_peek_icon(bool on);
 void ui_set_sending(bool on);          /* a message / photo is on its way: quick buttons and "send" greyed, taps ignored */
 bool ui_is_sending(void);

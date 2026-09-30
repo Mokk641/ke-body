@@ -112,6 +112,7 @@ static void on_audio(audio_evt_t evt, const uint8_t *wav, size_t len)
     case AUDIO_EVT_REC_DONE:
         ui_override_face(NULL);
         ui_override_corner(NULL);
+        ui_set_mic_level(-1);
         send_recording(wav, len);
         break;
     case AUDIO_EVT_PLAY_START:
@@ -119,6 +120,9 @@ static void on_audio(audio_evt_t evt, const uint8_t *wav, size_t len)
         break;
     case AUDIO_EVT_PLAY_DONE:
         ui_override_face(NULL);
+        break;
+    case AUDIO_EVT_REC_LEVEL:
+        ui_set_mic_level((int)len);
         break;
     }
 }

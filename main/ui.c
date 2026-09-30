@@ -413,6 +413,7 @@ void ui_start(void)
     s_snap = heap_caps_calloc(1, sizeof(ui_state_t), MALLOC_CAP_SPIRAM);
     s_ink = heap_caps_calloc(1, sizeof(ink_t), MALLOC_CAP_SPIRAM);
     s_state->ink = s_ink;
+    s_state->mic_level = -1;
     assert(s_fb && s_state && s_snap);
     s_state->pressed = UI_HIT_NONE;
     s_state->screen = UI_SCREEN_FACE;
@@ -835,6 +836,15 @@ void ui_flash_border(void)
     lock();
     if (an_on(AN_FLASH)) s_flash_ms = 600;
     unlock();
+}
+
+void ui_set_mic_level(int level)
+{
+    lock();
+    if (level > s_state->mic_level || level < 0) s_state->mic_level = level;            /* rises at once ... */
+    else s_state->mic_level = (s_state->mic_level * 3 + level) / 4;                     /* ... falls smoothly */
+    unlock();
+    mark_dirty();
 }
 
 void ui_set_sending(bool on)

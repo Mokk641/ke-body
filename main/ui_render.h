@@ -93,6 +93,7 @@ typedef struct {
     music_info_t music;
     const char (*music_names)[UI_MUSIC_TITLE];   /* song titles for the list page (owned by music.c) */
     int music_scroll;         /* list page: pixels scrolled */
+    int mic_level;            /* recording: loudness 0..100 for the bar along the top edge, -1 = not recording */
     int ink_scroll;           /* characters the strip is scrolled back from the newest (0 = follow the newest) */
     const ink_t *ink;         /* handwriting page: the strokes (owned by ui.c, read by the renderer) */
     int dot_x, dot_y, dot_ms; /* touch marker (touchlog on): where, and how much longer it stays */

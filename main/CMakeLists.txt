@@ -20,6 +20,7 @@ idf_component_register(
         "camera.c"
         "ink.c"
         "png.c"
+        "agc.c"
         "mp3src.c"
         "music.c"
         "pics.c"

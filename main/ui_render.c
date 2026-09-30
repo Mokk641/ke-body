@@ -1118,6 +1118,12 @@ void ui_render(const ui_state_t *s)
     }
     draw_toast(p, s, &g);
 
+    if (s->mic_level >= 0) {                              /* recording: a bar grows from the middle of the top edge */
+        int w = g.W * s->mic_level / 100;
+        if (w < 6) w = 6;
+        gfx_fill_round_rect((g.W - w) / 2, 1, w, 6, 3, p->her_bub);
+    }
+
     if (s->dot_ms > 0) {                                  /* touchlog: where the controller thinks the finger is */
         uint16_t yc = GFX_RGB(0xFF, 0xE0, 0x00);
         gfx_ring((float)s->dot_x, (float)s->dot_y, 12.f, 2.5f, yc);

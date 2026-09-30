@@ -137,6 +137,22 @@ int main(void)
         CHECK(x0 >= px && y0 >= py && x1 <= px + side && y1 <= py + side, "the rectangle stays inside the writing square");
     }
 
+    /* 3c. the recording bar along the top edge */
+    {
+        s->screen = UI_SCREEN_FACE; s->page_pos = 0; s->mic_level = -1;
+        ui_render(s);
+        int off = 0; for (int x = 0; x < gfx_width(); x++) if (fb[3 * gfx_width() + x] == be(COL_D_HER_BUBBLE) || fb[3 * gfx_width() + x] == be(COL_L_HER_BUBBLE)) off++;
+        s->mic_level = 60;
+        ui_render(s);
+        int on = 0; for (int x = 0; x < gfx_width(); x++) if (fb[3 * gfx_width() + x] == be(COL_D_HER_BUBBLE)) on++;
+        s->mic_level = 100;
+        ui_render(s);
+        int full = 0; for (int x = 0; x < gfx_width(); x++) if (fb[3 * gfx_width() + x] == be(COL_D_HER_BUBBLE)) full++;
+        CHECK(off == 0, "no level bar when not recording");
+        CHECK(on > gfx_width() / 3 && on < gfx_width() * 3 / 4 && full > on, "the bar grows with the loudness (%d px at 60, %d px at 100 of %d)", on, full, gfx_width());
+        s->mic_level = -1;
+    }
+
     /* 4. calibration */
     colorcal_set(100, 100, 100, 100);
     CHECK(!colorcal_active(), "calibration is off by default");

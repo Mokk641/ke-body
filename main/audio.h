@@ -15,6 +15,7 @@ typedef enum {
     AUDIO_EVT_REC_DONE,    /* wav/wav_len = complete WAV file (valid until the callback returns) */
     AUDIO_EVT_PLAY_START,
     AUDIO_EVT_PLAY_DONE,
+    AUDIO_EVT_REC_LEVEL,   /* while recording, ~20x per second: len = loudness 0..100 (wav is NULL) */
 } audio_evt_t;
 
 typedef void (*audio_cb_t)(audio_evt_t evt, const uint8_t *wav, size_t wav_len);
@@ -43,6 +44,12 @@ esp_err_t audio_set_slot_mode(bool mono);    /* I2S slot mode: stereo (default, 
 bool audio_slot_mono(void);
 void audio_dump_regs(void);             /* print ES8311 registers */
 esp_err_t audio_set_mic_gain(int step); /* 0..7 = 0..42 dB in 6 dB steps */
+
+/* Microphone gain in dB, 0..60 (saved): analog PGA in 6 dB steps up to 42 dB, the remainder as ADC digital volume.
+ * After a recording the level is normalised in software (peak ~0.8 of full scale), so this mostly sets the noise/clipping trade-off. */
+#define AUDIO_DEFAULT_MIC_DB 36
+esp_err_t audio_set_mic_db(int db);
+int audio_get_mic_db(void);
 
 /* Streaming playback (music): the audio task calls read() for decoded stereo int16 frames and plays them until it returns
  * 0 (end) / < 0 (error), or until stop / another command. read() and done() run in the audio task (a big stack: it may
