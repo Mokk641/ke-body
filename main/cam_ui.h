@@ -8,7 +8,9 @@
 void camui_init(void);                 /* loads the "peek" setting */
 void camui_enter(void);                /* chat -> camera screen (starts the live view) */
 void camui_leave(void);                /* -> chat screen, camera off */
-void camui_shoot(void);                /* take a photo, save, toast */
+void camui_shoot(void);                /* take a photo, save, then show it (review) */
+void camui_review(const char *name);   /* newest photo with 重拍 / 寄给克 / 保留 */
+void camui_back(void);                 /* 返回 / 保留: from the review back to the live view, otherwise leave the camera */
 void camui_gallery_enter(void);
 void camui_gallery_step(int dir);      /* +1 next, -1 previous */
 void camui_gallery_delete(void);

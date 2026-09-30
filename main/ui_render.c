@@ -11,7 +11,7 @@ typedef struct {
     uint16_t bar, sep, icon, icon_pressed;
     uint16_t ke_bub, ke_txt, her_bub, her_txt, av_bg, av_txt;
     uint16_t cap, cap_txt, cell, cell_txt, pressed;
-    uint16_t online, offline, accent, blush, toast_txt;
+    uint16_t online, offline, accent, blush, toast_txt, disabled_txt;
 } palette_t;
 
 #define PAL(X) { \
@@ -21,21 +21,24 @@ typedef struct {
     .av_bg = COL_##X##_AVATAR_BG, .av_txt = COL_##X##_AVATAR_TEXT, \
     .cap = COL_##X##_CAP, .cap_txt = COL_##X##_CAP_TEXT, .cell = COL_##X##_CELL, .cell_txt = COL_##X##_CELL_TEXT, \
     .pressed = COL_##X##_PRESSED, .online = COL_##X##_ONLINE, .offline = COL_##X##_OFFLINE, \
-    .accent = COL_##X##_ACCENT, .blush = COL_##X##_BLUSH, .toast_txt = COL_##X##_TOAST_TEXT }
+    .accent = COL_##X##_ACCENT, .blush = COL_##X##_BLUSH, .toast_txt = COL_##X##_TOAST_TEXT, \
+    .disabled_txt = COL_##X##_DISABLED_TEXT }
 
 static const palette_t PAL_DARK = PAL(D);
 static const palette_t PAL_LIGHT = PAL(L);
 
 /* ---- metrics ---------------------------------------------------------------------- */
 #define MARGIN      10
-#define BAR_H       36      /* chat page top and bottom bars */
-#define BUB_R       16      /* bubble corner radius */
-#define BUB_PADX    12
+#define TOP_H       56      /* chat page top bar: small face circle + name */
+#define BOT_H       46      /* chat page bottom area holding the rounded capsule bar */
+#define CAPBAR_H    34      /* the capsule itself */
+#define AV_D        36      /* diameter of the face circle in the top bar */
+#define BUB_MARGIN  12      /* bubble distance from the screen edge */
+#define BUB_R       18      /* bubble corner radius */
+#define BUB_PADX    13
 #define BUB_PADY    8
-#define MSG_GAP     8
-#define AV_W        68      /* the little face in front of my messages */
-#define AV_H        26
-#define AV_GAP      6
+#define MSG_GAP     10      /* between different senders */
+#define MSG_GAP_SAME 3      /* between consecutive messages of the same sender */
 #define CAP_H       30      /* quick-phrase capsule */
 #define CAP_GAP     8
 #define CELL_GAP    6
@@ -92,8 +95,8 @@ static void calc_geo(const ui_state_t *s, geo_t *g)
     g->W = gfx_width();
     g->H = gfx_height();
     g->land = g->W > g->H;
-    g->top_h = BAR_H;
-    g->bot_h = BAR_H;
+    g->top_h = TOP_H;
+    g->bot_h = BOT_H;
     g->bar_y = g->H - g->bot_h;
 
     int rows = 0;
@@ -297,33 +300,37 @@ static void draw_face_page(const palette_t *p, const ui_state_t *s, const geo_t 
 
 typedef struct { int lines; int w, h; gfx_line_t ln[8]; } msg_layout_t;
 
-static int bubble_max_w(int W, int who)
-{
-    return who == CHAT_KE ? W - MARGIN - AV_W - AV_GAP - 40 : (W - 2 * MARGIN) * 72 / 100;
-}
+static int bubble_max_w(int W) { return W * 70 / 100; }
 
 static void measure_msg(const chat_msg_t *m, int W, msg_layout_t *out)
 {
     const kb_font_t *f = &kb_font_text22;
-    out->lines = gfx_wrap(f, m->text, bubble_max_w(W, m->who) - 2 * BUB_PADX, out->ln, 8);
+    out->lines = gfx_wrap(f, m->text, bubble_max_w(W) - 2 * BUB_PADX, out->ln, 8);
     int w = 0;
     for (int i = 0; i < out->lines; i++) {
         int lw = gfx_text_width_n(f, out->ln[i].start, out->ln[i].len);
         if (lw > w) w = lw;
     }
     out->w = w + 2 * BUB_PADX;
-    if (out->w < 40) out->w = 40;
+    if (out->w < 2 * BUB_R + 8) out->w = 2 * BUB_R + 8;
     out->h = out->lines * (f->line_height + 2) + 2 * BUB_PADY;
+    if (out->h < 2 * BUB_R) out->h = 2 * BUB_R;
+}
+
+/* space above message i: small inside a run of one sender, larger when the sender changes */
+static int gap_above(const ui_state_t *s, int i)
+{
+    return (i > 0 && s->msgs[i - 1].who == s->msgs[i].who) ? MSG_GAP_SAME : MSG_GAP;
 }
 
 int ui_chat_content_height(const ui_state_t *s)
 {
     int W = gfx_width();
-    int total = 6;
+    int total = 8;
     msg_layout_t ml;
     for (int i = 0; i < s->msg_count; i++) {
         measure_msg(&s->msgs[i], W, &ml);
-        total += ml.h + MSG_GAP;
+        total += ml.h + (i > 0 ? gap_above(s, i) : 0);
     }
     return total;
 }
@@ -344,25 +351,13 @@ const char *ui_latest_ke_text(const ui_state_t *s)
     return "";
 }
 
-static void draw_avatar(const palette_t *p, int x, int y, const char *face)
-{
-    gfx_fill_round_rect(x, y, AV_W, AV_H, AV_H / 2, p->av_bg);
-    if (!face[0]) return;
-    const kb_font_t *f = &kb_font_face18;
-    int inner = AV_W - 10;
-    if (gfx_text_width(f, face) > inner) f = &kb_font_face13;
-    int len = gfx_fit_len(f, face, inner);
-    int tw = gfx_text_width_n(f, face, len);
-    gfx_draw_text_n(f, x + (AV_W - tw) / 2, face_baseline(f, y + AV_H / 2), face, len, p->av_txt);
-}
-
 static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t *g)
 {
     const kb_font_t *f = &kb_font_text22;
     const int lh = f->line_height + 2;
     gfx_set_clip(0, g->chat_y0, g->W, g->chat_y1 - g->chat_y0);
 
-    int y_bottom = g->chat_y1 - 6 + s->scroll;
+    int y_bottom = g->chat_y1 - 8 + s->scroll;
     msg_layout_t ml;
     for (int i = s->msg_count - 1; i >= 0; i--) {
         const chat_msg_t *m = &s->msgs[i];
@@ -371,15 +366,14 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
         int y = y0 + (i == s->msg_count - 1 ? s->slide_dy : 0);          /* newest bubble slides in from below */
         if (y + ml.h > g->chat_y0 && y < g->chat_y1) {
             bool her = m->who == CHAT_HER;
-            int x = her ? g->W - MARGIN - ml.w : MARGIN + AV_W + AV_GAP;
-            if (!her) draw_avatar(p, MARGIN, y + 2, m->face);
+            int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
             gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
             for (int k = 0; k < ml.lines; k++) {
                 gfx_draw_text_n(f, x + BUB_PADX, y + BUB_PADY + k * lh + f->ascent, ml.ln[k].start, ml.ln[k].len,
                                 her ? p->her_txt : p->ke_txt);
             }
         }
-        y_bottom = y0 - MSG_GAP;
+        y_bottom = y0 - (i > 0 ? gap_above(s, i) : 0);
         if (y_bottom < g->chat_y0 - 400) break;
     }
     if (s->msg_count == 0) {
@@ -388,49 +382,64 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
     gfx_clear_clip();
 }
 
+/* my face inside a small circle: brackets dropped and the text shrunk so it fits */
+static void draw_mini_face(const palette_t *p, const char *face, int cx, int cy)
+{
+    gfx_fill_circle(cx, cy, AV_D / 2, p->av_bg);
+    char core[UI_FACE_BUF];
+    snprintf(core, sizeof core, "%s", face[0] ? face : "(—_—)");
+    size_t n = strlen(core);
+    if (core[0] == '(' && n > 1 && core[n - 1] == ')') { memmove(core, core + 1, n - 2); core[n - 2] = 0; }
+    const kb_font_t *f = &kb_font_face18;
+    int inner = AV_D - 6, num = 10, den = 10;             /* the 18 px face font, shrunk in 10% steps until it fits */
+    while (num > 4 && gfx_text_width_scaled(f, core, num, den) > inner) num--;
+    if (gfx_text_width_scaled(f, core, num, den) > inner) {   /* still too wide: cut */
+        int len = gfx_fit_len(f, core, inner * den / num);
+        core[len] = 0;
+    }
+    int tw = gfx_text_width_scaled(f, core, num, den);
+    gfx_draw_text_scaled(f, cx - tw / 2, cy + f->size * 32 / 100 * num / den, core, p->av_txt, num, den);
+}
+
 static void draw_top_bar(const palette_t *p, const ui_state_t *s, const geo_t *g)
 {
-    const int W = g->W, h = g->top_h, mid = h / 2;
+    const int W = g->W, h = g->top_h;
     gfx_fill_rect(0, 0, W, h, p->bar);
     gfx_fill_rect(0, h - 1, W, 1, p->sep);
 
-    draw_chevron(24.f, (float)mid, 9.f, 5.f, false, 2.2f, s->pressed == UI_HIT_TOP_BACK ? p->icon_pressed : p->icon);
+    draw_chevron(24.f, (float)(h / 2), 8.f, 4.5f, false, 1.6f, s->pressed == UI_HIT_TOP_BACK ? p->icon_pressed : p->icon);
 
-    /* my face, live */
-    static const kb_font_t *const cands[] = { &kb_font_face18, &kb_font_face13 };
-    const char *face = s->face[0] ? s->face : "(—_—)";
-    const kb_font_t *f = pick_font(cands, 2, face, W - 230);
-    int len = gfx_fit_len(f, face, W - 230);
-    int fw = gfx_text_width_n(f, face, len);
-    gfx_draw_text_n(f, 50, face_baseline(f, mid), face, len, p->face);
-    const kb_font_t *nf = &kb_font_text22;
-    gfx_draw_text(nf, 50 + fw + 12, mid - nf->line_height / 2 + nf->ascent, "克", p->face);
+    /* centre: my face in a small circle, the name under it, a green dot beside the name while the bridge answers */
+    draw_mini_face(p, s->face, W / 2, 4 + AV_D / 2);
+    const kb_font_t *nf = &kb_font_small14;
+    const char *name = "克";
+    int nw = gfx_text_width(nf, name), ny = 4 + AV_D + 2 + nf->ascent;
+    gfx_draw_text(nf, W / 2 - nw / 2, ny, name, p->icon);
+    if (s->online) gfx_fill_circle(W / 2 + nw / 2 + 7, ny - nf->ascent / 2 - 1, 3, p->online);
 
-    /* bridge status dot, corner text and eye to its left */
-    gfx_fill_circle(W - 18, mid, 5, s->online ? p->online : p->offline);
-    draw_corner(p, s, W - 32, mid);
+    if (s->peek_on) draw_eye_icon(W - 36, h / 2 - 6, p->dim);       /* remote snapshots allowed */
 }
 
 static void draw_bottom_bar(const palette_t *p, const ui_state_t *s, const geo_t *g)
 {
-    const int W = g->W, y0 = g->bar_y, mid = y0 + g->bot_h / 2;
-    gfx_fill_rect(0, y0, W, g->bot_h, p->bar);
-    gfx_fill_rect(0, y0, W, 1, p->sep);
+    const int W = g->W, y0 = g->bar_y;
+    const int cy0 = y0 + (g->bot_h - CAPBAR_H) / 2, mid = cy0 + CAPBAR_H / 2;
+    gfx_fill_rect(0, y0, W, g->bot_h, p->bg);
+    gfx_fill_round_rect(MARGIN, cy0, W - 2 * MARGIN, CAPBAR_H, CAPBAR_H / 2, p->bar);
 
-    /* + (turns into an x while the panel is out) */
+    /* + (turns into an x while the panel is out): thin lines */
     uint16_t ic = s->pressed == UI_HIT_PLUS ? p->icon_pressed : p->icon;
-    float cx = (float)(MARGIN + 20), cy = (float)mid, ang = ease(s->panel_pos) * 0.7853982f;
+    float cx = (float)(MARGIN + 21), cy = (float)mid, ang = ease(s->panel_pos) * 0.7853982f;
     float ca = cosf(ang) * 7.f, sa = sinf(ang) * 7.f;
-    gfx_ring(cx, cy, 13.f, 1.6f, ic);
-    gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 2.f, ic);
-    gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 2.f, ic);
+    gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 1.6f, ic);
+    gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 1.6f, ic);
 
-    /* camera */
+    /* camera, drawn with thin lines */
     uint16_t cc = s->pressed == UI_HIT_CAM_BTN ? p->icon_pressed : p->icon;
-    int px = W - MARGIN - 24;
-    gfx_fill_round_rect(px - 6, mid - 13, 12, 6, 2, cc);
-    gfx_draw_round_rect(px - 13, mid - 9, 26, 19, 4, 2, cc);
-    gfx_ring((float)px, (float)mid + 1.f, 5.f, 2.f, cc);
+    int px = W - MARGIN - 22;
+    gfx_draw_round_rect(px - 11, mid - 7, 22, 15, 4, 1, cc);
+    gfx_draw_round_rect(px - 4, mid - 10, 8, 4, 2, 1, cc);
+    gfx_ring((float)px, (float)mid + 1.f, 4.f, 1.4f, cc);
 }
 
 /* index of the largest face font that fits a grid cell on one line (n-1 if none does) */
@@ -480,10 +489,10 @@ static void draw_panel(const palette_t *p, const ui_state_t *s, const geo_t *g)
         int x, row, w;
         if (!phrase_pos(s, g->W, i, &x, &row, &w)) continue;
         int y = py + 8 + row * (CAP_H + CAP_GAP);
-        gfx_fill_round_rect(x, y, w, CAP_H, CAP_H / 2, s->pressed == UI_HIT_TEXT_BTN0 + i ? p->pressed : p->cap);
+        gfx_fill_round_rect(x, y, w, CAP_H, CAP_H / 2, s->pressed == UI_HIT_TEXT_BTN0 + i && !s->sending ? p->pressed : p->cap);
         int inner = w - 16, len = gfx_fit_len(tf, s->text_btn[i].text, inner);
         int tw = gfx_text_width_n(tf, s->text_btn[i].text, len);
-        gfx_draw_text_n(tf, x + (w - tw) / 2, y + (CAP_H - tf->line_height) / 2 + tf->ascent, s->text_btn[i].text, len, p->cap_txt);
+        gfx_draw_text_n(tf, x + (w - tw) / 2, y + (CAP_H - tf->line_height) / 2 + tf->ascent, s->text_btn[i].text, len, s->sending ? p->disabled_txt : p->cap_txt);
     }
 
     /* emoji grid, one page at a time */
@@ -506,8 +515,8 @@ static void draw_panel(const palette_t *p, const ui_state_t *s, const geo_t *g)
         if (idx >= s->emoji_btn_n) break;
         int x, y, w, h;
         cell_rect(g, local, &x, &y, &w, &h);
-        gfx_fill_round_rect(x, y, w, h, 12, s->pressed == UI_HIT_EMOJI_BTN0 + idx ? p->pressed : p->cell);
-        draw_cell_face(cands, 4, common, s->emoji_btn[idx].text, x, y, w, h, p->cell_txt);
+        gfx_fill_round_rect(x, y, w, h, 12, s->pressed == UI_HIT_EMOJI_BTN0 + idx && !s->sending ? p->pressed : p->cell);
+        draw_cell_face(cands, 4, common, s->emoji_btn[idx].text, x, y, w, h, s->sending ? p->disabled_txt : p->cell_txt);
     }
     if (g->pages > 1) {
         int gy = py + 8 + g->phrases_h + g->grid_h + 9;
@@ -540,12 +549,12 @@ static void btn_rect3(const geo_t *g, int i, int *x, int *y, int *w)
     *w = bw;
 }
 
-static void draw_button(const palette_t *p, int x, int y, int w, const char *label, bool pressed)
+static void draw_button(const palette_t *p, int x, int y, int w, const char *label, bool pressed, bool disabled)
 {
     const kb_font_t *f = &kb_font_text22;
-    gfx_fill_round_rect(x, y, w, BTN_H, BTN_H / 2, pressed ? p->pressed : p->cap);
+    gfx_fill_round_rect(x, y, w, BTN_H, BTN_H / 2, pressed && !disabled ? p->pressed : p->cap);
     int tw = gfx_text_width(f, label);
-    gfx_draw_text(f, x + (w - tw) / 2, y + (BTN_H - f->line_height) / 2 + f->ascent, label, p->cap_txt);
+    gfx_draw_text(f, x + (w - tw) / 2, y + (BTN_H - f->line_height) / 2 + f->ascent, label, disabled ? p->disabled_txt : p->cap_txt);
 }
 
 static void draw_frame_fit(const ui_state_t *s, const geo_t *g, int area_h)
@@ -571,9 +580,9 @@ static void draw_camera_screen(const palette_t *p, const ui_state_t *s, const ge
         gfx_fill_round_rect(bx, by, tw, f->line_height + 8, 12, p->accent);
         gfx_draw_text(f, bx + BUB_PADX, by + 4 + f->ascent, s->cam_text, p->toast_txt);
     }
-    btn_rect3(g, 0, &x, &y, &w); draw_button(p, x, y, w, "拍照", false);
-    btn_rect3(g, 1, &x, &y, &w); draw_button(p, x, y, w, "相册", s->pressed == UI_HIT_CAM_GALLERY);
-    btn_rect3(g, 2, &x, &y, &w); draw_button(p, x, y, w, "返回", s->pressed == UI_HIT_CAM_BACK);
+    btn_rect3(g, 0, &x, &y, &w); draw_button(p, x, y, w, "拍照", false, false);
+    btn_rect3(g, 1, &x, &y, &w); draw_button(p, x, y, w, "相册", s->pressed == UI_HIT_CAM_GALLERY, false);
+    btn_rect3(g, 2, &x, &y, &w); draw_button(p, x, y, w, "返回", s->pressed == UI_HIT_CAM_BACK, false);
 }
 
 static void draw_gallery_screen(const palette_t *p, const ui_state_t *s, const geo_t *g)
@@ -588,9 +597,37 @@ static void draw_gallery_screen(const palette_t *p, const ui_state_t *s, const g
     else snprintf(hdr, sizeof hdr, "%.60s", s->cam_text[0] ? s->cam_text : "没有照片");
     gfx_draw_text(f, MARGIN, 6 + f->ascent, hdr, p->dim);
     if (!s->frame && s->gal_count == 0) gfx_draw_text_centered(&kb_font_text22, g->W / 2, area_h / 2, "没有照片", p->dim);
-    btn_rect3(g, 0, &x, &y, &w); draw_button(p, x, y, w, "删除", s->pressed == UI_HIT_GAL_DELETE);
-    btn_rect3(g, 1, &x, &y, &w); draw_button(p, x, y, w, "寄给克", s->pressed == UI_HIT_GAL_SEND);
-    btn_rect3(g, 2, &x, &y, &w); draw_button(p, x, y, w, "返回", s->pressed == UI_HIT_CAM_BACK);
+    /* review = the photo just taken: retake / send / keep */
+    btn_rect3(g, 0, &x, &y, &w); draw_button(p, x, y, w, s->review ? "重拍" : "删除", s->pressed == UI_HIT_GAL_DELETE, s->sending);
+    btn_rect3(g, 1, &x, &y, &w); draw_button(p, x, y, w, s->sending ? "发送中" : "寄给克", s->pressed == UI_HIT_GAL_SEND, s->sending);
+    btn_rect3(g, 2, &x, &y, &w); draw_button(p, x, y, w, s->review ? "保留" : "返回", s->pressed == UI_HIT_CAM_BACK, false);
+}
+
+/* ---- colour test pattern: swatches with their #RRGGBB, to compare with a phone ----------------------------- */
+
+static void draw_colortest(const ui_state_t *s, const geo_t *g)
+{
+    /* the colours the UI really uses (through the same macros), then a grey ramp and the primaries; the label is
+     * the intended #RRGGBB, so the screen can be compared with the same hex value on a phone */
+    static const struct { uint16_t col; const char *label; } sw[] = {
+        { COL_D_BG, "000000" }, { COL_D_BAR, "1C1C1E" }, { COL_D_KE_BUBBLE, "262628" }, { COL_D_CELL, "2C2C2E" },
+        { COL_D_HER_BUBBLE, "0A84FF" }, { COL_D_FACE, "FFFFFF" }, { COL_D_ONLINE, "30D158" }, { GFX_RGB(0x2F, 0x4A, 0x3A), "2F4A3A" },
+        { GFX_RGB(0xEF, 0xE3, 0xCF), "EFE3CF" }, { GFX_RGB(0xFF, 0x00, 0x00), "FF0000" }, { GFX_RGB(0x00, 0xFF, 0x00), "00FF00" },
+        { GFX_RGB(0x00, 0x00, 0xFF), "0000FF" }, { GFX_GREY(0x10), "101010" }, { GFX_GREY(0x30), "303030" }, { GFX_GREY(0x60), "606060" },
+        { GFX_GREY(0x90), "909090" }, { GFX_GREY(0xC0), "C0C0C0" }, { GFX_GREY(0xE0), "E0E0E0" },
+    };
+    const int n = (int)(sizeof sw / sizeof sw[0]);
+    const int cols = g->land ? 6 : 4;
+    const int rows = (n + cols - 1) / cols;
+    const int cw = g->W / cols, ch = (g->H - 20) / rows;
+    const kb_font_t *f = &kb_font_small14;
+    for (int i = 0; i < n; i++) {
+        int x = (i % cols) * cw, y = (i / cols) * ch;
+        gfx_fill_rect(x, y, cw, ch, sw[i].col);
+        int lum = (((sw[i].col >> 11) & 31) * 30 + ((sw[i].col >> 5) & 63) * 29 + (sw[i].col & 31) * 11) / 100 * 4;   /* rough 0..~255 */
+        gfx_draw_text_centered(f, x + cw / 2, y + ch / 2 + 4, sw[i].label, lum < 110 ? GFX_GREY(0xFF) : GFX_GREY(0x00));
+    }
+    gfx_draw_text_centered(f, g->W / 2, g->H - 5, "colour test - tap to leave", GFX_GREY(0xA0));
 }
 
 /* ---- toast and top level ------------------------------------------------------------------------------- */
@@ -626,7 +663,9 @@ void ui_render(const ui_state_t *s)
     gfx_clear_clip();
     gfx_fill(p->bg);
 
-    if (s->screen == UI_SCREEN_CAMERA) {
+    if (s->screen == UI_SCREEN_COLORTEST) {
+        draw_colortest(s, &g);
+    } else if (s->screen == UI_SCREEN_CAMERA) {
         draw_camera_screen(p, s, &g);
     } else if (s->screen == UI_SCREEN_GALLERY) {
         draw_gallery_screen(p, s, &g);
@@ -677,6 +716,8 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
         if (py < y - BTN_GAP) return cam ? UI_HIT_CAM_VIEW : UI_HIT_GAL_VIEW;
         return UI_HIT_NONE;
     }
+
+    if (s->screen == UI_SCREEN_COLORTEST) return UI_HIT_TEST_EXIT;
 
     if (s->screen == UI_SCREEN_FACE) {
         if (py >= g.H - 44 && px >= g.W / 2 - 110 && px < g.W / 2 + 110) return UI_HIT_HINT;

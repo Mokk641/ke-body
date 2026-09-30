@@ -144,5 +144,7 @@ esp_err_t wifi_mgr_start(wifi_mgr_cb_t cb)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     set_state(WIFI_MGR_CONNECTING);
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* no Wi-Fi power save: the board must answer ARP / HTTP at once and reach a sleepy PC reliably */
+    esp_wifi_set_ps(WIFI_PS_NONE);
     return ESP_OK;
 }

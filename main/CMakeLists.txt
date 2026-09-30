@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "board.c"
+        "colorcal.c"
         "pmic.cpp"
         "ui.c"
         "ui_render.c"
@@ -17,6 +18,7 @@ idf_component_register(
         "bridge.c"
         "imu.c"
         "camera.c"
+        "imgrot.c"
         "storage.c"
         "cam_ui.c"
         "fonts/font_face96.c"
@@ -38,6 +40,7 @@ idf_component_register(
         nvs_flash
         esp_wifi
         esp_netif
+        lwip
         esp_event
         esp_http_server
         esp_http_client

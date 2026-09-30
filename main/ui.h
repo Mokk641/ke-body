@@ -58,6 +58,10 @@ bool ui_is_sleeping(void);
 void ui_shake(void);                   /* face wobbles left/right briefly */
 void ui_flash_border(void);            /* optional silent alert: two soft border flashes (only if the flash switch is on) */
 void ui_set_peek_icon(bool on);
+void ui_set_sending(bool on);          /* a message / photo is on its way: quick buttons and "send" greyed, taps ignored */
+bool ui_is_sending(void);
+void ui_set_review(bool on);           /* gallery screen = the photo just taken: retake / send / keep */
+void ui_display_hold(bool hold);       /* stop / resume LCD refresh (while the camera grabs a photo); same task must pair the calls */
 
 /* camera / gallery screens */
 void ui_set_frame(const uint16_t *frame, int w, int h);   /* image shown on camera/gallery screen */

@@ -4,6 +4,7 @@
 #include "ui.h"
 #include "bridge.h"
 #include "settings.h"
+#include "gfx.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,6 +26,7 @@ static TaskHandle_t s_preview_task;
 static char (*s_names)[STORAGE_NAME_LEN];
 static int s_count, s_index;
 static uint16_t *s_shown;              /* decoded photo currently displayed */
+static bool s_review;                  /* gallery screen shows the photo just taken */
 
 void camui_init(void)
 {
@@ -40,9 +42,10 @@ static void preview_task(void *arg)
 {
     while (s_preview_run) {
         if (xSemaphoreTake(s_cam_lock, pdMS_TO_TICKS(200)) == pdTRUE) {
-            const uint16_t *f = camera_ready() ? camera_preview() : NULL;
+            int w = 0, h = 0;
+            const uint16_t *f = camera_ready() ? camera_preview(ui_get_rotation(), &w, &h) : NULL;
             xSemaphoreGive(s_cam_lock);
-            if (f && ui_get_screen() == UI_SCREEN_CAMERA) ui_set_frame(f, CAM_PREVIEW_W, CAM_PREVIEW_H);
+            if (f && ui_get_screen() == UI_SCREEN_CAMERA) ui_set_frame(f, w, h);
         }
         vTaskDelay(pdMS_TO_TICKS(40));
     }
@@ -92,6 +95,7 @@ void camui_leave(void)
     xSemaphoreGive(s_cam_lock);
     free(s_shown);
     s_shown = NULL;
+    s_review = false;
     ui_set_screen(UI_SCREEN_CHAT);
 }
 
@@ -99,20 +103,25 @@ void camui_shoot(void)
 {
     if (!storage_dir()) { ui_set_cam_text("没地方存照片，请插卡"); return; }
     ui_set_cam_text("拍照中...");
+    vTaskDelay(pdMS_TO_TICKS(150));                 /* let the text reach the screen before it freezes */
     uint8_t *jpeg = NULL;
     size_t len = 0;
+    preview_stop();                                 /* nothing else may touch the camera while it grabs a photo */
     xSemaphoreTake(s_cam_lock, portMAX_DELAY);
-    esp_err_t err = camera_capture_jpeg(&jpeg, &len);
+    ui_display_hold(true);                          /* no LCD refresh while the camera DMA writes into PSRAM */
+    esp_err_t err = camera_capture_jpeg(ui_get_rotation(), &jpeg, &len);
+    ui_display_hold(false);
     xSemaphoreGive(s_cam_lock);
-    if (err != ESP_OK) { ui_set_cam_text("拍照失败"); return; }
+    if (err != ESP_OK) { ui_set_cam_text("拍照失败"); preview_start(); return; }
     char name[STORAGE_NAME_LEN];
     err = storage_save_jpeg(jpeg, len, name, sizeof name);
     free(jpeg);
-    char msg[64];
-    if (err == ESP_ERR_NO_MEM) snprintf(msg, sizeof msg, "内部只能存 %d 张，请插卡", STORAGE_FLASH_MAX);
-    else if (err != ESP_OK) snprintf(msg, sizeof msg, "保存失败");
-    else snprintf(msg, sizeof msg, "已保存 %s", name);
-    ui_set_cam_text(msg);
+    if (err != ESP_OK) {
+        ui_set_cam_text(err == ESP_ERR_NO_MEM ? "内部存满了，请插卡" : "保存失败");
+        preview_start();
+        return;
+    }
+    camui_review(name);
 }
 
 /* ---- gallery -------------------------------------------------------------------- */
@@ -135,7 +144,7 @@ static void gallery_show(void)
     size_t len = 0;
     if (storage_read(s_names[s_index], &jpeg, &len) != ESP_OK) { ui_set_cam_text("读不出来"); return; }
     int w, h;
-    esp_err_t err = camera_decode_to_fit(jpeg, len, 480, 320 - 44, &s_shown, &w, &h);
+    esp_err_t err = camera_decode_to_fit(jpeg, len, gfx_width(), gfx_height() - 44, &s_shown, &w, &h);
     free(jpeg);
     if (err != ESP_OK) { ui_set_cam_text("解码失败"); return; }
     ui_set_frame(s_shown, w, h);
@@ -148,8 +157,35 @@ void camui_gallery_enter(void)
     if (!s_names) s_names = heap_caps_malloc(STORAGE_MAX_FILES * STORAGE_NAME_LEN, MALLOC_CAP_SPIRAM);
     s_count = s_names ? storage_list(s_names) : 0;
     s_index = s_count - 1;
+    s_review = false;
     ui_set_screen(UI_SCREEN_GALLERY);
     gallery_show();
+}
+
+/* the photo just taken, shown before deciding: 重拍 (delete + live view) / 寄给克 / 保留 (live view) */
+void camui_review(const char *name)
+{
+    (void)name;                                     /* it is the newest file */
+    camui_gallery_enter();
+    s_review = true;
+    ui_set_review(true);
+}
+
+static void back_to_live(void)
+{
+    s_review = false;
+    free(s_shown);
+    s_shown = NULL;
+    ui_set_screen(UI_SCREEN_CAMERA);
+    ui_set_cam_text(storage_dir() ? (storage_is_sd() ? "SD 卡" : "没插卡，存内部") : "没地方存照片");
+    preview_start();
+}
+
+/* 返回 / 保留 */
+void camui_back(void)
+{
+    if (s_review) back_to_live();
+    else camui_leave();
 }
 
 void camui_gallery_step(int dir)
@@ -164,6 +200,7 @@ void camui_gallery_step(int dir)
 void camui_gallery_delete(void)
 {
     if (s_count == 0) return;
+    bool retake = s_review;
     if (storage_delete(s_names[s_index]) == ESP_OK) {
         memmove(s_names[s_index], s_names[s_index + 1], (size_t)(s_count - s_index - 1) * STORAGE_NAME_LEN);
         s_count--;
@@ -172,6 +209,7 @@ void camui_gallery_delete(void)
     } else {
         ui_toast("删除失败", 1500);
     }
+    if (retake) { back_to_live(); return; }
     gallery_show();
 }
 
@@ -180,6 +218,7 @@ void camui_gallery_send(void)
     if (s_count == 0) return;
     uint8_t *jpeg = NULL;
     size_t len = 0;
+    if (ui_is_sending()) return;                    /* one photo, one send: no double taps */
     if (storage_read(s_names[s_index], &jpeg, &len) != ESP_OK) { ui_toast("读不出来", 1500); return; }
     bridge_send_photo(jpeg, len);
     free(jpeg);
@@ -204,7 +243,7 @@ esp_err_t camui_remote_snap(uint8_t **jpeg, size_t *len)
     xSemaphoreTake(s_cam_lock, portMAX_DELAY);
     bool was_on = camera_ready();
     esp_err_t err = was_on ? ESP_OK : camera_init();
-    if (err == ESP_OK) err = camera_capture_jpeg(jpeg, len);
+    if (err == ESP_OK) err = camera_capture_jpeg(ui_get_rotation(), jpeg, len);
     if (!was_on) camera_deinit();
     xSemaphoreGive(s_cam_lock);
     return err;

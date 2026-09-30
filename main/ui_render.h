@@ -35,7 +35,7 @@ typedef struct {
     char text[UI_SAY_BUF];
 } chat_msg_t;
 
-typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY } ui_screen_t;
+typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST } ui_screen_t;
 
 typedef struct { char text[UI_BTN_TEXT_LEN]; } ui_button_t;
 
@@ -76,6 +76,8 @@ typedef struct {
     /* camera / gallery screens */
     const uint16_t *frame;    /* byte-swapped RGB565 image to show (preview or photo), or NULL */
     int frame_w, frame_h;
+    bool review;              /* gallery screen shows the photo just taken (retake / send / keep) */
+    bool sending;             /* a message/photo is on its way: buttons greyed, taps ignored */
     char cam_text[64];        /* status line on the camera/gallery screen */
     int gal_index, gal_count; /* "3 / 12" */
 } ui_state_t;
@@ -96,6 +98,7 @@ enum {
     UI_HIT_TOP_BACK,       /* chat page top bar: the down chevron */
     UI_HIT_TOPBAR,         /* chat page top bar: the rest (drag down = back to the face page) */
     UI_HIT_PLUS,           /* chat page bottom bar: + */
+    UI_HIT_TEST_EXIT,      /* colour test pattern: tap anywhere to leave */
     UI_HIT_PANEL,          /* open panel: empty part (also the panel while it is still sliding) */
     UI_HIT_TEXT_BTN0 = 100,   /* + index into text_btn */
     UI_HIT_EMOJI_BTN0 = 200,  /* + index into emoji_btn (absolute, not per page) */

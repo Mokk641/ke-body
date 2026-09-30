@@ -10,7 +10,8 @@
 #define STORAGE_MAX_FILES 200
 #define STORAGE_NAME_LEN  40
 
-esp_err_t storage_init(void);          /* mounts what it can; safe to call again */
+esp_err_t storage_init(void);
+esp_err_t storage_rescan(void);   /* probe the SD slot again (card inserted after boot) */          /* mounts what it can; safe to call again */
 bool storage_is_sd(void);
 const char *storage_dir(void);         /* ".../DCIM" or NULL if nothing is mounted */
 

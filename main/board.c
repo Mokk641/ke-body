@@ -13,6 +13,7 @@
  *   I2C   : SDA=GPIO8 SCL=GPIO7
  */
 #include "board.h"
+#include "colorcal.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -307,6 +308,9 @@ esp_err_t board_init(void)
     return ESP_OK;
 }
 
+void board_lcd_set_calibration(int gamma_x100, int r_pct, int g_pct, int b_pct) { colorcal_set(gamma_x100, r_pct, g_pct, b_pct); }
+void board_lcd_get_calibration(int out[4]) { colorcal_get(out); }
+
 void board_lcd_flush(const uint16_t *fb)
 {
     const int w = s_w, h = s_h;
@@ -321,7 +325,8 @@ void board_lcd_flush(const uint16_t *fb)
             xSemaphoreTake(s_flush_done, portMAX_DELAY);
             inflight--;
         }
-        memcpy(s_bounce[buf], fb + (size_t)y * w, bytes);
+        if (colorcal_active()) colorcal_apply((uint16_t *)s_bounce[buf], fb + (size_t)y * w, bytes / 2);
+        else memcpy(s_bounce[buf], fb + (size_t)y * w, bytes);
         if (esp_lcd_panel_draw_bitmap(s_panel, 0, y, w, y + rows, s_bounce[buf]) == ESP_OK) {
             inflight++;
         }

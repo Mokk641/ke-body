@@ -10,6 +10,7 @@
 #include "imu.h"
 #include "cam_ui.h"
 #include "camera.h"
+#include "storage.h"
 #include "lineedit.h"
 #include "gfx.h"
 
@@ -182,6 +183,39 @@ static int cmd_msg(int argc, char **argv)
     return 0;
 }
 
+/* colour calibration: color [gamma% r% g% b%] | color reset ; colortest */
+static int cmd_color(int argc, char **argv)
+{
+    int c[4];
+    if (argc == 1) {
+        board_lcd_get_calibration(c);
+        printf("color: gamma %d%%, r %d%%, g %d%%, b %d%%  (100 100 100 100 = off)\n", c[0], c[1], c[2], c[3]);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "reset") == 0) {
+        board_lcd_set_calibration(100, 100, 100, 100);
+        settings_set_str("cal", "100 100 100 100");
+        printf("color calibration off\n");
+        return 0;
+    }
+    if (argc != 5) { printf("usage: color <gamma%%> <r%%> <g%%> <b%%> | color reset   e.g. color 110 100 96 88\n"); return 1; }
+    for (int i = 0; i < 4; i++) c[i] = atoi(argv[1 + i]);
+    board_lcd_set_calibration(c[0], c[1], c[2], c[3]);
+    board_lcd_get_calibration(c);
+    char buf[40];
+    snprintf(buf, sizeof buf, "%d %d %d %d", c[0], c[1], c[2], c[3]);
+    settings_set_str("cal", buf);
+    printf("color: %s (saved). gamma>100 darkens mid-tones, r/g/b are channel gains in %%\n", buf);
+    return 0;
+}
+
+static int cmd_colortest(int argc, char **argv)
+{
+    ui_set_screen(UI_SCREEN_COLORTEST);
+    printf("colour test pattern on screen; tap to leave\n");
+    return 0;
+}
+
 static int cmd_buttons(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "reset") == 0) {
@@ -248,7 +282,26 @@ static int cmd_cam(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "gallery") == 0) { camui_gallery_enter(); return 0; }
     if (argc == 3 && strcmp(argv[1], "vflip") == 0) { camera_set_vflip(strcmp(argv[2], "on") == 0); printf("vflip %s (saved)\n", argv[2]); return 0; }
     if (argc == 3 && strcmp(argv[1], "mirror") == 0) { camera_set_hmirror(strcmp(argv[2], "on") == 0); printf("mirror %s (saved)\n", argv[2]); return 0; }
-    printf("usage: cam on|off|shot|gallery | cam vflip on|off | cam mirror on|off\n");
+    if (argc == 3 && strcmp(argv[1], "xclk") == 0) { camera_set_xclk(atoi(argv[2])); camera_print_settings(); return 0; }
+    if (argc == 3 && strcmp(argv[1], "quality") == 0) { camera_set_quality(atoi(argv[2])); camera_print_settings(); return 0; }
+    if (argc == 3 && strcmp(argv[1], "awb") == 0) { camera_set_awb(strcmp(argv[2], "on") == 0); camera_print_settings(); return 0; }
+    if (argc == 3 && strcmp(argv[1], "wb") == 0) {
+        if (!camera_set_wb(argv[2])) { printf("wb: auto sunny cloudy office home\n"); return 1; }
+        camera_print_settings();
+        return 0;
+    }
+    if (argc == 3 && strcmp(argv[1], "rot") == 0) {
+        if (!camera_set_rot(atoi(argv[2]))) { printf("rot: 0 90 180 270 (extra clockwise turn on top of the display rotation)\n"); return 1; }
+        camera_print_settings();
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "status") == 0) { camera_print_settings(); return 0; }
+    printf("usage: cam on|off|shot|gallery|status\n"
+           "       cam xclk <6-24 MHz>   (default 10; lower = fewer stripes, slower)\n"
+           "       cam quality <4-63>    (JPEG, lower = better, default 10)\n"
+           "       cam awb on|off | cam wb auto|sunny|cloudy|office|home\n"
+           "       cam rot 0|90|180|270  (extra clockwise turn if pictures are still sideways)\n"
+           "       cam vflip on|off | cam mirror on|off\n");
     return 1;
 }
 
@@ -263,6 +316,7 @@ static int cmd_peek(int argc, char **argv)
 
 static int cmd_photos(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "rescan") == 0) { storage_rescan(); }
     camui_print_photos();
     return 0;
 }
@@ -454,14 +508,16 @@ esp_err_t console_cmd_start(void)
         { .command = "audio",    .help = "audio test [ms] [rate] | audio mic [ms] | audio slot mono|stereo | audio regs | audio gain <0-7>", .func = cmd_audio },
         { .command = "gpio",     .help = "gpio <n> 0|1|in   (drive a free ESP32 pin, amplifier-enable hunting)", .func = cmd_gpio },
         { .command = "msg",      .help = "msg <text>   send like a quick button (chat + bridge /msg)", .func = cmd_msg },
+        { .command = "color",    .help = "color [gamma% r% g% b% | reset]  screen colour calibration (saved)", .func = cmd_color },
+        { .command = "colortest", .help = "show swatches with their #RRGGBB to compare with a phone", .func = cmd_colortest },
         { .command = "buttons",  .help = "buttons [reset]  show the quick-button config JSON / restore defaults", .func = cmd_buttons },
         { .command = "anim",     .help = "anim [blink|blush|zzz|shake|flash] on|off  (no name = all; saved)", .func = cmd_anim },
         { .command = "chime",    .help = "chime on|off  soft tone on new message (saved)", .func = cmd_chime },
         { .command = "imu",      .help = "imu | imu invert on|off   (accelerometer)", .func = cmd_imu },
         { .command = "autorotate", .help = "autorotate on|off (saved, default off)", .func = cmd_autorotate },
-        { .command = "cam",      .help = "cam on|off|shot|gallery | cam vflip on|off | cam mirror on|off", .func = cmd_cam },
+        { .command = "cam",      .help = "cam on|off|shot|gallery|status|xclk|quality|awb|wb|rot|vflip|mirror (see `cam` for details)", .func = cmd_cam },
         { .command = "peek",     .help = "peek on|off  allow remote /snap (saved, default off)", .func = cmd_peek },
-        { .command = "photos",   .help = "list photos (SD card or flash)", .func = cmd_photos },
+        { .command = "photos",   .help = "photos [rescan]  list photos (SD card or flash); rescan = look for a newly inserted SD card", .func = cmd_photos },
         { .command = "face",     .help = "face <kaomoji>  (local test)", .func = cmd_face },
         { .command = "say",      .help = "say <text>      (local test)", .func = cmd_say },
     };

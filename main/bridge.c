@@ -10,6 +10,13 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_http_client.h"
+#include "esp_netif.h"
+#include "esp_netif_net_stack.h"
+#include "lwip/etharp.h"
+#include "lwip/netif.h"
+#include "lwip/tcpip.h"
+#include "lwip/ip4_addr.h"
+#include "lwip/netdb.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
@@ -17,6 +24,7 @@ static const char *TAG = "bridge";
 
 typedef struct { int type; uint8_t *data; size_t len; } job_t;   /* type 0 = text, 1 = photo */
 static QueueHandle_t s_q;
+static volatile int s_pending;   /* jobs queued or being sent: the buttons are greyed while > 0 */
 
 bool bridge_url(const char *path, char *out, size_t out_len)
 {
@@ -78,34 +86,103 @@ esp_err_t bridge_post(const char *url, const char *content_type, const uint8_t *
     return err;
 }
 
+/* ---- reaching a sleepy PC ---------------------------------------------------------------------------
+ * A laptop whose Wi-Fi card is in power-save misses the board's broadcast ARP "who has 192.168.x.y?",
+ * so the board cannot find it and connect() fails (ESP_ERR_HTTP_CONNECT) - until the PC talks to the board
+ * first. So before sending we ask for the PC's MAC a few times (each request is another chance to hit the
+ * PC's wake-up window), and if the send still fails it is retried after 1 s, 2 s and 4 s. */
+
+static ip4_addr_t s_arp_ip;
+static struct netif *s_arp_netif;
+
+static void arp_cb(void *arg)
+{
+    etharp_request(s_arp_netif, &s_arp_ip);
+}
+
+static bool url_host_ip(const char *url, ip4_addr_t *out)
+{
+    const char *p = strstr(url, "://");
+    p = p ? p + 3 : url;
+    char host[64];
+    size_t n = strcspn(p, ":/");
+    if (n == 0 || n >= sizeof host) return false;
+    memcpy(host, p, n);
+    host[n] = 0;
+    if (ip4addr_aton(host, out)) return true;
+    struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM }, *res = NULL;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) return false;
+    out->addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr;
+    freeaddrinfo(res);
+    return true;
+}
+
+static void arp_wake(const char *url)
+{
+    if (!url_host_ip(url, &s_arp_ip)) return;
+    esp_netif_t *n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    s_arp_netif = n ? esp_netif_get_netif_impl(n) : NULL;
+    if (!s_arp_netif) return;
+    for (int i = 0; i < 3; i++) {
+        tcpip_callback(arp_cb, NULL);
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
+/* one line for the screen, in plain words */
+static const char *why(esp_err_t err, int status, char *buf, size_t n)
+{
+    if (err == ESP_ERR_HTTP_CONNECT) return "电脑没找到";
+    if (err == ESP_ERR_HTTP_EAGAIN || err == ESP_ERR_TIMEOUT || err == ESP_ERR_HTTP_FETCH_HEADER) return "电脑没回应";
+    if (err != ESP_OK) return "没送出去";
+    snprintf(buf, n, "电脑那边出错了(%d)", status);
+    return buf;
+}
+
 static void worker(void *arg)
 {
     job_t j;
+    static const int backoff_ms[] = { 1000, 2000, 4000 };
     for (;;) {
         if (xQueueReceive(s_q, &j, portMAX_DELAY) != pdTRUE) continue;
         char url[200];
         const char *path = j.type == 1 ? "photo" : "msg";
         if (!bridge_url(path, url, sizeof url)) {
-            ui_toast("未设置服务器地址\n串口输入: server http://电脑IP:8770/hear", 4000);
+            ui_toast("还没设置电脑地址\n串口输入: server http://电脑IP:8770/hear", 4000);
         } else if (wifi_mgr_state() != WIFI_MGR_CONNECTED) {
             ui_toast("没有网络，没发出去", 3000);
         } else {
-            int status = 0;
-            esp_err_t err = bridge_post(url, j.type == 1 ? "image/jpeg" : "text/plain; charset=utf-8",
-                                        j.data, j.len, &status, NULL, NULL, 0);
-            if (err != ESP_OK) {
-                char msg[80];
-                snprintf(msg, sizeof msg, "发送失败: %s", esp_err_to_name(err));
-                ui_toast(msg, 3000);
-            } else if (status / 100 != 2) {
-                char msg[64];
-                snprintf(msg, sizeof msg, "服务器返回 %d", status);
-                ui_toast(msg, 3000);
-            } else if (j.type == 1) {
-                ui_toast("寄出去了", 1500);
+            bool done = false;
+            for (int attempt = 0; attempt < 4 && !done; attempt++) {
+                if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(backoff_ms[attempt - 1]));
+                arp_wake(url);
+                int status = 0;
+                esp_err_t err = bridge_post(url, j.type == 1 ? "image/jpeg" : "text/plain; charset=utf-8",
+                                            j.data, j.len, &status, NULL, NULL, 0);
+                if (err == ESP_OK && status / 100 == 2) {
+                    done = true;
+                    if (j.type == 1) ui_toast("寄出去了", 1500);
+                    continue;
+                }
+                char detail[40];
+                const char *reason = why(err, status, detail, sizeof detail);
+                if (err == ESP_OK && status / 100 == 4) {          /* the bridge refused it: retrying will not help */
+                    ui_toast(reason, 3000);
+                    break;
+                }
+                if (attempt < 3) {
+                    char msg[80];
+                    snprintf(msg, sizeof msg, "%s，稍后自动重试", reason);
+                    ui_toast(msg, backoff_ms[attempt] + 800);
+                } else {
+                    char msg[128];
+                    snprintf(msg, sizeof msg, "%s，没送出去\n电脑醒着并开着 ke_bridge 再试", reason);
+                    ui_toast(msg, 4000);
+                }
             }
         }
         free(j.data);
+        if (__atomic_sub_fetch(&s_pending, 1, __ATOMIC_SEQ_CST) <= 0) ui_set_sending(false);
     }
 }
 
@@ -117,9 +194,12 @@ static void enqueue(int type, const uint8_t *data, size_t len)
     if (!j.data) return;
     memcpy(j.data, data, len);
     j.data[len] = 0;
+    __atomic_add_fetch(&s_pending, 1, __ATOMIC_SEQ_CST);
+    ui_set_sending(true);
     if (xQueueSend(s_q, &j, 0) != pdTRUE) {
         free(j.data);
         ui_toast("发送队列满了", 2000);
+        if (__atomic_sub_fetch(&s_pending, 1, __ATOMIC_SEQ_CST) <= 0) ui_set_sending(false);
     }
 }
 
@@ -141,6 +221,7 @@ static void probe_task(void *arg)
         bool ok = false;
         char url[200];
         if (wifi_mgr_state() == WIFI_MGR_CONNECTED && bridge_url("ping", url, sizeof url)) {
+            arp_wake(url);
             esp_http_client_config_t cfg = { .url = url, .method = HTTP_METHOD_GET, .timeout_ms = 2500 };
             esp_http_client_handle_t c = esp_http_client_init(&cfg);
             if (c) {

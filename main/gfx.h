@@ -5,7 +5,13 @@
 #include <stdbool.h>
 #include "kb_font.h"
 
-#define GFX_RGB(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
+/* RGB565 from 8-bit channels, rounded (not truncated: truncating makes everything darker and shifts hues). */
+#define GFX_RGB(r, g, b) ((uint16_t)(((((r) * 31 + 127) / 255) << 11) | ((((g) * 63 + 127) / 255) << 5) | (((b) * 31 + 127) / 255)))
+/* Neutral grey: red = blue = the 5-bit level and green = the same level expanded to 6 bits, so a grey stays
+ * exactly grey. (Independently rounded R5/G6/B5 give greys a green or blue cast, most visible on the dark
+ * greys of the iMessage look.) */
+#define GFX_GREY5(l) ((uint16_t)(((l) << 11) | ((((l) << 1) | ((l) >> 4)) << 5) | (l)))
+#define GFX_GREY(v) GFX_GREY5((((v) * 31 + 127) / 255))
 
 /* fb must hold w*h uint16_t. Pixels are stored byte-swapped (big-endian RGB565)
  * so the buffer can be streamed to the ST7796 over SPI without conversion. */
@@ -42,6 +48,9 @@ int gfx_text_width(const kb_font_t *f, const char *utf8);
 int gfx_text_width_n(const kb_font_t *f, const char *utf8, int len);
 void gfx_draw_text(const kb_font_t *f, int x, int y, const char *utf8, uint16_t color);
 void gfx_draw_text_n(const kb_font_t *f, int x, int y, const char *utf8, int len, uint16_t color);
+/* Text shrunk to num/den of its bitmap size (num <= den); x,y as for gfx_draw_text (y = baseline). */
+int gfx_text_width_scaled(const kb_font_t *f, const char *utf8, int num, int den);
+void gfx_draw_text_scaled(const kb_font_t *f, int x, int y, const char *utf8, uint16_t color, int num, int den);
 void gfx_draw_text_centered(const kb_font_t *f, int cx, int y, const char *utf8, uint16_t color);
 
 /* Byte length of the longest prefix of utf8 (whole characters) that is at most max_w wide. */

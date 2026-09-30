@@ -687,6 +687,30 @@ void ui_flash_border(void)
     unlock();
 }
 
+void ui_set_sending(bool on)
+{
+    lock();
+    s_state->sending = on;
+    unlock();
+    mark_dirty();
+}
+
+void ui_set_review(bool on)
+{
+    lock();
+    s_state->review = on;
+    unlock();
+    mark_dirty();
+}
+
+void ui_display_hold(bool hold)
+{
+    /* the render task keeps the framebuffer lock while it draws and pushes a frame: holding it here means no
+     * LCD traffic (and no PSRAM reads for it) while the camera DMA writes a frame into PSRAM */
+    if (hold) xSemaphoreTake(s_fb_lock, portMAX_DELAY);
+    else xSemaphoreGive(s_fb_lock);
+}
+
 void ui_set_peek_icon(bool on)
 {
     lock();
@@ -703,6 +727,7 @@ void ui_set_screen(ui_screen_t screen)
     s_state->screen = screen;
     s_state->pressed = UI_HIT_NONE;
     s_state->frame = NULL;
+    s_state->review = false;
     s_state->cam_text[0] = 0;
     /* immediate: no slide when coming back from the camera */
     s_state->page_pos = screen == UI_SCREEN_FACE ? 0 : 255;
@@ -740,6 +765,8 @@ void ui_set_gallery_pos(int index, int count)
     mark_dirty();
 }
 
+bool ui_is_sending(void) { return s_state->sending; }
+
 void ui_get_state_copy(ui_state_t *out)
 {
     lock();
@@ -763,6 +790,7 @@ static bool handle_tap_in_ui(int hit)
 {
     switch (hit) {
     case UI_HIT_HINT:     ui_go_page(UI_SCREEN_CHAT); return true;
+    case UI_HIT_TEST_EXIT: ui_set_screen(UI_SCREEN_FACE); return true;
     case UI_HIT_TOP_BACK: ui_go_page(UI_SCREEN_FACE); return true;
     case UI_HIT_PLUS:     ui_panel_set(!ui_panel_is_open()); return true;
     case UI_HIT_PANEL:
@@ -859,6 +887,9 @@ void ui_touch(bool down, int x, int y)
         int hit_up = ui_hit_test(s_state, s_last_x, s_last_y);
         unlock();
         if (hit_up != s_hit) return;
-        if (!handle_tap_in_ui(s_hit)) app_on_tap(s_hit);
+        if (handle_tap_in_ui(s_hit)) return;
+        bool send_btn = s_hit >= UI_HIT_TEXT_BTN0 || s_hit == UI_HIT_GAL_SEND || s_hit == UI_HIT_GAL_DELETE;
+        if (send_btn && ui_is_sending()) return;           /* greyed out while a send is in progress: no double taps */
+        app_on_tap(s_hit);
     }
 }

@@ -27,9 +27,13 @@ static wl_handle_t s_wl = WL_INVALID_HANDLE;
 static char s_dir[32];
 static bool s_is_sd;
 
+static bool s_sd_probed;   /* probe the SD slot once per boot (rescan on request): a missing card must not spam the log */
+
 static esp_err_t try_sd(void)
 {
     if (s_card) return ESP_OK;
+    if (s_sd_probed) return ESP_ERR_NOT_FOUND;
+    s_sd_probed = true;
     esp_vfs_fat_sdmmc_mount_config_t mount = { .format_if_mount_failed = false, .max_files = 4, .allocation_unit_size = 16 * 1024 };
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
@@ -57,6 +61,12 @@ static esp_err_t try_flash(void)
     if (err != ESP_OK) ESP_LOGE(TAG, "flash storage mount failed: %s", esp_err_to_name(err));
     else ESP_LOGI(TAG, "flash storage mounted at %s", FLASH_MOUNT);
     return err;
+}
+
+esp_err_t storage_rescan(void)
+{
+    if (!s_card) s_sd_probed = false;
+    return storage_init();
 }
 
 esp_err_t storage_init(void)

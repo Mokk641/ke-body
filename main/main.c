@@ -156,7 +156,7 @@ void app_on_tap(int hit)
         camui_gallery_enter();
         break;
     case UI_HIT_CAM_BACK:
-        camui_leave();
+        camui_back();
         break;
     case UI_HIT_GAL_DELETE:
         camui_gallery_delete();
@@ -254,6 +254,12 @@ void app_main(void)
         ESP_LOGE(TAG, "AXP2101 init failed; continuing without PMIC setup");
     }
 
+    {   /* saved colour calibration: "gamma r g b" (percent) */
+        char cal[40];
+        int c[4] = { 100, 100, 100, 100 };
+        if (settings_get_str("cal", cal, sizeof cal)) sscanf(cal, "%d %d %d %d", &c[0], &c[1], &c[2], &c[3]);
+        board_lcd_set_calibration(c[0], c[1], c[2], c[3]);
+    }
     ui_start();
     light_init();
     bridge_start();

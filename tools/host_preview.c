@@ -6,14 +6,14 @@
  *
  * options:  --land | --port         orientation (default land)
  *           --light                 light theme
- *           --page face|chat|camera|gallery   (default face)
+ *           --page face|chat|camera|gallery|colortest   (default face)
  *           --slide N               page_pos 0..255 (a frame in the middle of the face<->chat slide)
  *           --panel N               panel_pos 0..255 on the chat page (255 = fully out); --epage N = emoji page
  *           --face TEXT             expression         --corner TEXT       status text
  *           --line TEXT             latest sentence from Ke (adds a message)
  *           --sleep                 sleeping face with z's (--tick N picks the animation frame)
  *           --blink | --blush N     eyes closed / blush "//" strength 0..255
- *           --toast TEXT | --offline | --peek | --pressed HITID | --scroll PX | --few | --slidein PX
+ *           --sending | --review | --toast TEXT | --offline | --peek | --pressed HITID | --scroll PX | --few | --slidein PX
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,7 +50,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--light")) s->theme = UI_THEME_LIGHT;
         else if (!strcmp(a, "--page")) {
             const char *v = ARG;
-            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : UI_SCREEN_FACE;
+            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : UI_SCREEN_FACE;
         }
         else if (!strcmp(a, "--slide")) s->page_pos = atoi(ARG);
         else if (!strcmp(a, "--panel")) { s->panel_pos = atoi(ARG); s->panel_open = s->panel_pos > 0; }
@@ -68,6 +68,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--pressed")) s->pressed = atoi(ARG);
         else if (!strcmp(a, "--scroll")) s->scroll = atoi(ARG);
         else if (!strcmp(a, "--few")) few = true;
+        else if (!strcmp(a, "--sending")) s->sending = true;
+        else if (!strcmp(a, "--review")) s->review = true;
         else if (!strcmp(a, "--slidein")) s->slide_dy = atoi(ARG);
         else { fprintf(stderr, "unknown option %s\n", a); return 1; }
     }

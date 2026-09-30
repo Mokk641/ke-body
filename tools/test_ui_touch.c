@@ -356,6 +356,25 @@ int main(void)
         CHECK(!st->blink, "blink off leaves the eyes open");
     }
 
+    /* ---- sending: buttons are ignored while a message / photo is on its way ---- */
+    to_chat();
+    tap_hit(UI_HIT_PLUS); settle();
+    ui_set_sending(true);
+    snap();
+    CHECK(st->sending, "sending flag set");
+    CHECK(tap_hit(UI_HIT_TEXT_BTN0) && n_taps == 0, "phrase tap ignored while sending");
+    CHECK(tap_hit(UI_HIT_EMOJI_BTN0) && n_taps == 0, "emoji tap ignored while sending");
+    ui_set_sending(false);
+    CHECK(tap_hit(UI_HIT_TEXT_BTN0) && n_taps == 1, "phrase tap works again afterwards");
+    ui_panel_set(false); settle();
+
+    /* ---- colour test pattern: tap anywhere leaves it ---- */
+    ui_set_screen(UI_SCREEN_COLORTEST);
+    reset_counts();
+    press_release(200, 150, 90);
+    snap();
+    CHECK(st->screen == UI_SCREEN_FACE && n_taps == 0, "tap on the colour test returns to the face page");
+
     /* ---- camera screen ---- */
     ui_set_screen(UI_SCREEN_CAMERA);
     snap();

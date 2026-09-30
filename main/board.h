@@ -26,6 +26,9 @@ int board_lcd_height(void);
 /* Push a full frame (board_lcd_width x board_lcd_height, RGB565 byte-swapped)
  * to the panel. Blocks until sent. */
 void board_lcd_flush(const uint16_t *fb);
+/* Optional colour calibration: gamma x100 (100 = none) and per-channel gain in percent. */
+void board_lcd_set_calibration(int gamma_x100, int r_pct, int g_pct, int b_pct);
+void board_lcd_get_calibration(int out[4]);
 
 /* Backlight 0..100 */
 void board_backlight_set(uint8_t percent);

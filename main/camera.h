@@ -5,19 +5,28 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-#define CAM_PREVIEW_W 480
+#define CAM_PREVIEW_W 480      /* buffer size: 480x320 (landscape) or 320x480 (portrait) */
 #define CAM_PREVIEW_H 320
 
-esp_err_t camera_init(void);       /* JPEG mode; buffers sized for the photo size, preview at HVGA */
+esp_err_t camera_init(void);       /* JPEG mode; sensor always in a portrait size, see camera.c */
 void camera_deinit(void);
 bool camera_ready(void);
 
-/* Grab one preview frame and decode it into the internal RGB565 (byte-swapped)
- * buffer. Returns the buffer (CAM_PREVIEW_W x CAM_PREVIEW_H) or NULL. */
-const uint16_t *camera_preview(void);
+/* Grab one preview frame, decode it, rotate it for the given display rotation (0/90/180/270; the
+ * `cam rot` correction is added) and return a byte-swapped RGB565 buffer of *w x *h, or NULL. */
+const uint16_t *camera_preview(int display_rot, int *w, int *h);
 
-/* Take a photo at the photo size (SXGA 1280x1024 JPEG). *jpeg is malloc'd (PSRAM). */
-esp_err_t camera_capture_jpeg(uint8_t **jpeg, size_t *len);
+/* Take a photo (864x1536 sensor JPEG) and return it upright for the display rotation: rotated and
+ * re-encoded when needed. *jpeg is malloc'd (PSRAM). */
+esp_err_t camera_capture_jpeg(int display_rot, uint8_t **jpeg, size_t *len);
+
+/* Tuning knobs for the serial `cam` command (all saved to NVS). */
+void camera_set_xclk(int mhz);           /* 6..24, default 10; re-initialises the camera if it is on */
+void camera_set_quality(int q);          /* 4..63, lower = better, default 10 */
+void camera_set_awb(bool on);
+bool camera_set_wb(const char *name);    /* auto sunny cloudy office home */
+bool camera_set_rot(int deg);            /* extra clockwise correction 0/90/180/270 */
+void camera_print_settings(void);
 
 /* Orientation tweaks (saved to NVS). */
 void camera_set_vflip(bool on);

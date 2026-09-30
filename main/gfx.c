@@ -302,6 +302,60 @@ static void draw_glyph(const kb_font_t *f, const kb_glyph_t *g, int px, int py, 
     }
 }
 
+/* ---- scaled text (used for the tiny face in the chat top bar) ---------------------------------- */
+
+static inline int glyph_alpha(const kb_font_t *f, const kb_glyph_t *g, int xx, int yy)
+{
+    int stride = (g->w + 1) / 2;
+    const uint8_t *row = f->bitmap + g->off + yy * stride;
+    return (xx & 1) ? (row[xx >> 1] & 0x0F) : (row[xx >> 1] >> 4);
+}
+
+/* area-averaged down-scale of one glyph by num/den (num <= den) */
+static void draw_glyph_scaled(const kb_font_t *f, const kb_glyph_t *g, int px, int py, uint16_t color, int num, int den)
+{
+    const float sc = (float)num / (float)den;
+    int x0 = px + (int)floorf((float)g->xoff * sc + 0.5f), y0 = py + (int)floorf((float)g->yoff * sc + 0.5f);
+    int dw = (int)ceilf((float)g->w * sc), dh = (int)ceilf((float)g->h * sc);
+    for (int j = 0; j < dh; j++) {
+        float sy0 = (float)j / sc, sy1 = fminf((float)(j + 1) / sc, (float)g->h);
+        for (int i = 0; i < dw; i++) {
+            float sx0 = (float)i / sc, sx1 = fminf((float)(i + 1) / sc, (float)g->w);
+            float acc = 0.f, area = 0.f;
+            for (int yy = (int)sy0; yy < (int)ceilf(sy1) && yy < g->h; yy++) {
+                float wy = fminf((float)(yy + 1), sy1) - fmaxf((float)yy, sy0);
+                for (int xx = (int)sx0; xx < (int)ceilf(sx1) && xx < g->w; xx++) {
+                    float wx = fminf((float)(xx + 1), sx1) - fmaxf((float)xx, sx0);
+                    acc += (float)glyph_alpha(f, g, xx, yy) * wx * wy;
+                    area += wx * wy;
+                }
+            }
+            if (area > 0.f) {
+                int a = (int)(acc / area * 17.f * 1.15f);          /* slight boost: thin strokes get lost when shrunk */
+                blend8(x0 + i, y0 + j, color, a > 255 ? 255 : a);
+            }
+        }
+    }
+}
+
+int gfx_text_width_scaled(const kb_font_t *f, const char *utf8, int num, int den)
+{
+    return gfx_text_width(f, utf8) * num / den;
+}
+
+void gfx_draw_text_scaled(const kb_font_t *f, int x, int y, const char *utf8, uint16_t color, int num, int den)
+{
+    x += s_ox; y += s_oy;
+    float fx = (float)x;
+    while (*utf8) {
+        uint32_t cp = gfx_utf8_next(&utf8);
+        const kb_glyph_t *g = find_glyph(f, cp);
+        if (!g) { fx += (float)glyph_advance(f, cp) * num / den; continue; }
+        if (g->w) draw_glyph_scaled(f, g, (int)(fx + 0.5f), y, color, num, den);
+        fx += (float)g->adv * num / den;
+    }
+}
+
 static void draw_tofu(const kb_font_t *f, int px, int py, uint16_t color)
 {
     int w = f->size * 3 / 4, h = f->ascent;
