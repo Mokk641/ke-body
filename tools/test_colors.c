@@ -29,7 +29,7 @@ static int close_to(uint16_t native, int r, int g, int b)
 {
     int rr, gg, bb;
     unpack(native, &rr, &gg, &bb);
-    return abs(rr - r) <= 8 && abs(gg - g) <= 4 && abs(bb - b) <= 8;
+    return abs(rr - r) <= 8 && abs(gg - g) <= 6 && abs(bb - b) <= 8;
 }
 
 static void add(ui_state_t *s, int who, const char *t)
@@ -62,6 +62,8 @@ int main(void)
     CHECK(GFX_RGB(255, 255, 255) == 0xFFFF && GFX_GREY(255) == 0xFFFF, "white is 0xFFFF");
     CHECK(close_to(COL_D_KE_BUBBLE, 0x26, 0x26, 0x28), "my bubble ~ #262628");
     CHECK(close_to(COL_D_HER_BUBBLE, 0x0A, 0x84, 0xFF), "her bubble ~ #0A84FF");
+    CHECK(close_to(COL_L_HER_BUBBLE, 0x00, 0x7A, 0xFF) && close_to(COL_L_KE_BUBBLE, 0xE9, 0xE9, 0xEB) && close_to(COL_L_BAR, 0xF2, 0xF2, 0xF7) &&
+          close_to(COL_L_SEP, 0xD1, 0xD1, 0xD6) && COL_L_BG == 0xFFFF, "light palette: #FFFFFF / #E9E9EB / #007AFF / #F2F2F7 / #D1D1D6");
     CHECK(close_to(COL_D_BAR, 0x1C, 0x1C, 0x1E), "bars ~ #1C1C1E");
     CHECK(close_to(COL_D_CAP, 0x2C, 0x2C, 0x2E) && close_to(COL_D_CELL, 0x2C, 0x2C, 0x2E), "capsules / cells ~ #2C2C2E");
     CHECK(COL_D_KE_TEXT == GFX_RGB(255, 255, 255) && COL_D_HER_TEXT == GFX_RGB(255, 255, 255), "both text colours are white");

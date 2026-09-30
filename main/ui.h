@@ -44,7 +44,7 @@ esp_err_t ui_set_rotation(int rotation);
 void ui_refresh_after_rotation(void);   /* after board_lcd_set_rotation() by auto-rotate */
 int ui_get_rotation(void);
 esp_err_t ui_set_theme(const char *name);
-const char *ui_get_theme(void);
+const char *ui_get_theme(void);          /* "light" | "dark" | "auto" (the mode; auto = dark during the night schedule) */
 
 /* animations. Each one has its own switch (saved to NVS); "all" is the master switch.
  * names: blink (default off), blush, zzz, shake (default on), flash = border flash (default off) */

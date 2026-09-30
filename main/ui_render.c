@@ -29,9 +29,8 @@ static const palette_t PAL_LIGHT = PAL(L);
 
 /* ---- metrics ---------------------------------------------------------------------- */
 #define MARGIN      10
-#define TOP_H       56      /* chat page top bar: small face circle + name */
-#define BOT_H       46      /* chat page bottom area holding the rounded capsule bar */
-#define CAPBAR_H    34      /* the capsule itself */
+#define TOP_H       48      /* chat page top bar: small face circle + name */
+#define BOT_H       44      /* chat page bottom strip: only the + and camera icons float here (no background) */
 #define AV_D        36      /* diameter of the face circle in the top bar */
 #define BUB_MARGIN  12      /* bubble distance from the screen edge */
 #define BUB_R       18      /* bubble corner radius */
@@ -62,7 +61,8 @@ typedef struct {
     int cols, rows, cell_w, cell_h, per_page, pages;
     int grid_h, panel_h;        /* panel_h: full-open height */
     int panel_shown, panel_y;   /* currently visible height / top edge */
-    int chat_y0, chat_y1;       /* message viewport */
+    int chat_y0, chat_y1;       /* message viewport: newest message ends at chat_y1 */
+    int chat_clip_y1;           /* messages are drawn (and scroll) down to here: under the floating icons when the panel is closed */
 } geo_t;
 
 int ui_emoji_per_page(void) { return gfx_width() > gfx_height() ? 8 : 9; }
@@ -121,6 +121,7 @@ static void calc_geo(const ui_state_t *s, geo_t *g)
     g->panel_y = g->bar_y - g->panel_shown;
     g->chat_y0 = g->top_h;
     g->chat_y1 = g->panel_y;
+    g->chat_clip_y1 = g->panel_shown > 0 ? g->panel_y : g->H;
 }
 
 /* emoji cell rect for local index (0..per_page-1) in full-open panel coordinates */
@@ -355,7 +356,7 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
 {
     const kb_font_t *f = &kb_font_text22;
     const int lh = f->line_height + 2;
-    gfx_set_clip(0, g->chat_y0, g->W, g->chat_y1 - g->chat_y0);
+    gfx_set_clip(0, g->chat_y0, g->W, g->chat_clip_y1 - g->chat_y0);
 
     int y_bottom = g->chat_y1 - 8 + s->scroll;
     msg_layout_t ml;
@@ -364,7 +365,7 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
         measure_msg(m, g->W, &ml);
         int y0 = y_bottom - ml.h;
         int y = y0 + (i == s->msg_count - 1 ? s->slide_dy : 0);          /* newest bubble slides in from below */
-        if (y + ml.h > g->chat_y0 && y < g->chat_y1) {
+        if (y + ml.h > g->chat_y0 && y < g->chat_clip_y1) {
             bool her = m->who == CHAT_HER;
             int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
             gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
@@ -403,43 +404,49 @@ static void draw_mini_face(const palette_t *p, const char *face, int cx, int cy)
 
 static void draw_top_bar(const palette_t *p, const ui_state_t *s, const geo_t *g)
 {
-    const int W = g->W, h = g->top_h;
+    const int W = g->W, h = g->top_h, mid = h / 2;
     gfx_fill_rect(0, 0, W, h, p->bar);
     gfx_fill_rect(0, h - 1, W, 1, p->sep);
 
-    draw_chevron(24.f, (float)(h / 2), 8.f, 4.5f, false, 1.6f, s->pressed == UI_HIT_TOP_BACK ? p->icon_pressed : p->icon);
+    draw_chevron(18.f, (float)mid, 7.f, 4.f, false, 1.6f, s->pressed == UI_HIT_TOP_BACK ? p->icon_pressed : p->icon);
 
-    /* centre: my face in a small circle, the name under it, a green dot beside the name while the bridge answers */
-    draw_mini_face(p, s->face, W / 2, 4 + AV_D / 2);
-    const kb_font_t *nf = &kb_font_small14;
+    /* on the left: my face in a small circle, then the name, then a green dot while the bridge answers */
+    const int cx = 38 + AV_D / 2;
+    draw_mini_face(p, s->face, cx, mid - 1);
+    const kb_font_t *nf = &kb_font_text22;
     const char *name = "克";
-    int nw = gfx_text_width(nf, name), ny = 4 + AV_D + 2 + nf->ascent;
-    gfx_draw_text(nf, W / 2 - nw / 2, ny, name, p->icon);
-    if (s->online) gfx_fill_circle(W / 2 + nw / 2 + 7, ny - nf->ascent / 2 - 1, 3, p->online);
+    int nx = cx + AV_D / 2 + 8, nw = gfx_text_width(nf, name);
+    gfx_draw_text(nf, nx, mid - 1 - nf->line_height / 2 + nf->ascent, name, p->cap_txt);
+    if (s->online) gfx_fill_circle(nx + nw + 8, mid, 3, p->online);
 
-    if (s->peek_on) draw_eye_icon(W - 36, h / 2 - 6, p->dim);       /* remote snapshots allowed */
+    if (s->peek_on) draw_eye_icon(W - 36, mid - 6, p->dim);         /* remote snapshots allowed */
 }
 
 static void draw_bottom_bar(const palette_t *p, const ui_state_t *s, const geo_t *g)
 {
-    const int W = g->W, y0 = g->bar_y;
-    const int cy0 = y0 + (g->bot_h - CAPBAR_H) / 2, mid = cy0 + CAPBAR_H / 2;
-    gfx_fill_rect(0, y0, W, g->bot_h, p->bg);
-    gfx_fill_round_rect(MARGIN, cy0, W - 2 * MARGIN, CAPBAR_H, CAPBAR_H / 2, p->bar);
+    const int W = g->W, y0 = g->bar_y, mid = y0 + g->bot_h / 2;
+    /* no background of its own; once the panel is out the strip gets the panel colour so it reads as one sheet */
+    if (s->panel_pos > 0) gfx_fill_rect(0, y0, W, g->bot_h, gfx_mix(p->bg, p->bar, (int)(ease(s->panel_pos) * 255.f)));
+    const uint16_t halo = s->panel_pos > 0 ? gfx_mix(p->bg, p->bar, (int)(ease(s->panel_pos) * 255.f)) : p->bg;
 
     /* + (turns into an x while the panel is out): thin lines */
     uint16_t ic = s->pressed == UI_HIT_PLUS ? p->icon_pressed : p->icon;
     float cx = (float)(MARGIN + 21), cy = (float)mid, ang = ease(s->panel_pos) * 0.7853982f;
-    float ca = cosf(ang) * 7.f, sa = sinf(ang) * 7.f;
-    gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 1.6f, ic);
-    gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 1.6f, ic);
+    float ca = cosf(ang) * 8.f, sa = sinf(ang) * 8.f;
+    gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 4.8f, halo);        /* both halos first, then both strokes */
+    gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 4.8f, halo);
+    gfx_line(cx - ca, cy - sa, cx + ca, cy + sa, 1.8f, ic);
+    gfx_line(cx + sa, cy - ca, cx - sa, cy + ca, 1.8f, ic);
 
-    /* camera, drawn with thin lines */
+    /* camera, thin lines with a halo */
     uint16_t cc = s->pressed == UI_HIT_CAM_BTN ? p->icon_pressed : p->icon;
     int px = W - MARGIN - 22;
-    gfx_draw_round_rect(px - 11, mid - 7, 22, 15, 4, 1, cc);
+    gfx_draw_round_rect(px - 14, mid - 9, 28, 20, 6, 4, halo);
+    gfx_draw_round_rect(px - 6, mid - 12, 12, 8, 3, 3, halo);
+    gfx_ring((float)px, (float)mid + 1.f, 4.5f, 4.6f, halo);
+    gfx_draw_round_rect(px - 12, mid - 7, 24, 16, 4, 2, cc);
     gfx_draw_round_rect(px - 4, mid - 10, 8, 4, 2, 1, cc);
-    gfx_ring((float)px, (float)mid + 1.f, 4.f, 1.4f, cc);
+    gfx_ring((float)px, (float)mid + 1.f, 4.5f, 1.6f, cc);
 }
 
 /* index of the largest face font that fits a grid cell on one line (n-1 if none does) */
@@ -725,11 +732,11 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
     }
 
     /* chat page */
-    if (py < g.top_h) return px < 52 ? UI_HIT_TOP_BACK : UI_HIT_TOPBAR;
+    if (py < g.top_h) return px < 36 ? UI_HIT_TOP_BACK : UI_HIT_TOPBAR;
     if (py >= g.bar_y) {
         if (px < 64) return UI_HIT_PLUS;
         if (px >= g.W - 64) return UI_HIT_CAM_BTN;
-        return UI_HIT_NONE;
+        return s->panel_open ? UI_HIT_NONE : UI_HIT_CHAT;      /* transparent strip: the chat is underneath */
     }
     if (s->panel_open && py >= g.panel_y) {
         if (s->panel_pos < 255) return UI_HIT_PANEL;                 /* still sliding: no button presses */

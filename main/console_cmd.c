@@ -167,7 +167,7 @@ static int cmd_night(int argc, char **argv)
 static int cmd_theme(int argc, char **argv)
 {
     if (argc == 1) { printf("theme: %s\n", ui_get_theme()); return 0; }
-    if (ui_set_theme(argv[1]) != ESP_OK) { printf("usage: theme dark|light\n"); return 1; }
+    if (ui_set_theme(argv[1]) != ESP_OK) { printf("usage: theme light|dark|auto\n"); return 1; }
     printf("theme: %s (saved)\n", ui_get_theme());
     return 0;
 }
@@ -501,7 +501,7 @@ esp_err_t console_cmd_start(void)
         { .command = "rotate",   .help = "rotate 0|90|180|270 (saved)", .func = cmd_rotate },
         { .command = "bright",   .help = "bright <5-100> (saved)", .func = cmd_bright },
         { .command = "night",    .help = "night HH:MM HH:MM <level> | night off | night (status + time)", .func = cmd_night },
-        { .command = "theme",    .help = "theme dark|light (saved)", .func = cmd_theme },
+        { .command = "theme",    .help = "theme light|dark|auto (auto = dark during the night schedule; saved)", .func = cmd_theme },
         { .command = "touchlog", .help = "touchlog on|off  print touch coordinates", .func = cmd_touchlog },
         { .command = "pmic",     .help = "pmic | pmic init | pmic <rail> on|off   (AXP2101 rails)", .func = cmd_pmic },
         { .command = "tca",      .help = "tca | tca <pin> 0|1|in   (TCA9554 expander pins)", .func = cmd_tca },

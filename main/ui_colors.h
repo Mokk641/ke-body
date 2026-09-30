@@ -42,18 +42,18 @@
 
 /* ============================ LIGHT ============================ */
 #define COL_L_BG            GFX_GREY(0xFF)   /* #FFFFFF */
-#define COL_L_FACE          GFX_GREY(0x1D)   /* #1C1C1E */
+#define COL_L_FACE          GFX_RGB(0x00, 0x00, 0x00)   /* #000000 white theme: the big face is black */
 #define COL_L_TEXT_DIM      GFX_GREY(0xAF)   /* #AEAEB2 */
 #define COL_L_LINE_TEXT     GFX_GREY(0x6D)   /* #6C6C70 */
 
 #define COL_L_BAR           GFX_GREY(0xF4)   /* #F2F2F7 */
-#define COL_L_SEP           GFX_GREY(0xE2)   /* #E0E0E5 */
-#define COL_L_ICON          GFX_GREY(0x90)   /* #8E8E93 */
+#define COL_L_SEP           GFX_GREY(0xD2)   /* #D1D1D6 */
+#define COL_L_ICON          GFX_GREY(0x5C)   /* #5C5C5C dark-grey icons */
 #define COL_L_ICON_PRESSED  GFX_RGB(0x00, 0x00, 0x00)   /* #000000 */
 
 #define COL_L_KE_BUBBLE     GFX_GREY(0xEA)   /* #E9E9EB */
 #define COL_L_KE_TEXT       GFX_RGB(0x00, 0x00, 0x00)   /* #000000 */
-#define COL_L_HER_BUBBLE    GFX_RGB(0x0A, 0x84, 0xFF)   /* #0A84FF */
+#define COL_L_HER_BUBBLE    GFX_RGB(0x00, 0x7A, 0xFF)   /* #007AFF */
 #define COL_L_HER_TEXT      GFX_GREY(0xFF)   /* #FFFFFF */
 #define COL_L_AVATAR_BG     GFX_GREY(0xE7)   /* #E5E5EA */
 #define COL_L_AVATAR_TEXT   GFX_GREY(0x1D)   /* #1C1C1E */

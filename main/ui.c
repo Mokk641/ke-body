@@ -3,6 +3,7 @@
 #include "gfx.h"
 #include "board.h"
 #include "settings.h"
+#include "light.h"
 #include "app_actions.h"
 
 #include <string.h>
@@ -24,11 +25,10 @@ static const char *TAG = "ui";
 #define SLEEP_FACE     "(—_—)"
 #define NOTICE_FACE    "(—o—)"      /* the face flips to this for a second when a message arrives */
 #define KEY_ROTATE     "rotate"
-#define KEY_THEME      "theme"
+#define KEY_THEME      "theme_mode"   /* light | dark | auto (v6.1: new key, so an old saved "dark" does not stick) */
 #define KEY_BUTTONS    "buttons"
 #define KEY_ANIM       "anim"       /* master switch; per-animation keys are an_<name> */
 #define DEFAULT_ROTATION 90
-#define DEFAULT_THEME    UI_THEME_DARK
 #define DEFAULT_BUTTONS  "{\"text\":[\"想你了\",\"抱抱\",\"在干嘛\",\"晚安\"]," \
     "\"emoji\":[\"(—ω—)\",\"(—//—)\",\"(—▽—)♡\",\"(—ε—)\",\"(—_—)♡\",\"(—︵—)\",\"V(—ω—)V\",\"(—o—)\",\"(=ω=)\",\"(—∀-)\"]," \
     "\"shake\":\"想你了\"}"
@@ -134,6 +134,17 @@ static void clamp_scroll(void)
     if (s_state->scroll < 0) s_state->scroll = 0;
 }
 
+enum { THEME_LIGHT = 0, THEME_DARK, THEME_AUTO };
+static int s_theme_mode = THEME_AUTO;      /* default: white by day, dark during the night schedule */
+
+/* palette for the current mode; `auto` follows the night schedule of light.c (light until the clock is known) */
+static int theme_for_mode(void)
+{
+    if (s_theme_mode == THEME_DARK) return UI_THEME_DARK;
+    if (s_theme_mode == THEME_LIGHT) return UI_THEME_LIGHT;
+    return light_night_active() ? UI_THEME_DARK : UI_THEME_LIGHT;
+}
+
 static void render_task(void *arg)
 {
     for (;;) {
@@ -155,11 +166,19 @@ static int step_toward(int cur, int target, int step)
     return cur;
 }
 
+static int s_theme_tick;
+
 /* 50 ms tick: page / panel slides, bubble slide-in, fades, blush, shake, z's, blink, flash, toast */
 static void tick_cb(void *arg)
 {
     bool redraw = false;
     lock();
+
+    if (s_theme_mode == THEME_AUTO && ++s_theme_tick >= 20) {          /* once a second */
+        s_theme_tick = 0;
+        int t = theme_for_mode();
+        if (t != s_state->theme) { s_state->theme = t; redraw = true; }
+    }
 
     if (s_toast_ms > 0) {
         s_toast_ms -= TICK_MS;
@@ -380,10 +399,11 @@ void ui_start(void)
         int v = atoi(buf);
         if (v == 0 || v == 90 || v == 180 || v == 270) rot = v;
     }
-    s_state->theme = DEFAULT_THEME;
     if (settings_get_str(KEY_THEME, buf, sizeof buf)) {
-        if (strcmp(buf, "light") == 0) s_state->theme = UI_THEME_LIGHT;
+        if (strcmp(buf, "light") == 0) s_theme_mode = THEME_LIGHT;
+        else if (strcmp(buf, "dark") == 0) s_theme_mode = THEME_DARK;
     }
+    s_state->theme = theme_for_mode();
     if (settings_get_str(KEY_ANIM, buf, sizeof buf)) s_anim_master = strcmp(buf, "off") != 0;
     for (int k = 0; k < AN_N; k++) {
         char key[16];
@@ -593,19 +613,24 @@ void ui_refresh_after_rotation(void)
 
 esp_err_t ui_set_theme(const char *name)
 {
-    int t;
-    if (strcmp(name, "dark") == 0) t = UI_THEME_DARK;
-    else if (strcmp(name, "light") == 0) t = UI_THEME_LIGHT;
+    int m;
+    if (strcmp(name, "dark") == 0) m = THEME_DARK;
+    else if (strcmp(name, "light") == 0) m = THEME_LIGHT;
+    else if (strcmp(name, "auto") == 0) m = THEME_AUTO;
     else return ESP_ERR_INVALID_ARG;
     lock();
-    s_state->theme = t;
+    s_theme_mode = m;
+    s_state->theme = theme_for_mode();
     unlock();
     settings_set_str(KEY_THEME, name);
     mark_dirty();
     return ESP_OK;
 }
 
-const char *ui_get_theme(void) { return s_state->theme == UI_THEME_LIGHT ? "light" : "dark"; }
+const char *ui_get_theme(void)
+{
+    return s_theme_mode == THEME_DARK ? "dark" : s_theme_mode == THEME_LIGHT ? "light" : "auto";
+}
 
 /* ---- animation ------------------------------------------------------------------ */
 

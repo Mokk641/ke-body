@@ -49,7 +49,7 @@ static const char *TAG = "camera";
 #define PHOTO_H 1536
 
 static bool s_ready;
-static bool s_vflip = true, s_hmirror = false;
+static bool s_vflip = false, s_hmirror = true;   /* measured on the board: this is upright (v6.1); the quarter turn is done in software */
 static int s_xclk_mhz = 10;      /* 20 -> 10: fewer stripes (PSRAM bandwidth shared with the LCD) */
 static int s_quality = 10;       /* sensor JPEG quality register, 4..63, LOWER = better */
 static int s_rot_off = 0;        /* extra clockwise correction, 0/90/180/270 */
@@ -102,11 +102,11 @@ static void apply_tuning(void)
 static void load_settings(void)
 {
     char buf[12];
-    if (settings_get_str("cam_vflip", buf, sizeof buf)) s_vflip = strcmp(buf, "off") != 0;
-    if (settings_get_str("cam_mirror", buf, sizeof buf)) s_hmirror = strcmp(buf, "on") == 0;
+    if (settings_get_str("cam2_vflip", buf, sizeof buf)) s_vflip = strcmp(buf, "off") != 0;
+    if (settings_get_str("cam2_mirror", buf, sizeof buf)) s_hmirror = strcmp(buf, "on") == 0;
     if (settings_get_str("cam_xclk", buf, sizeof buf)) s_xclk_mhz = atoi(buf);
     if (settings_get_str("cam_quality", buf, sizeof buf)) s_quality = atoi(buf);
-    if (settings_get_str("cam_rot", buf, sizeof buf)) s_rot_off = atoi(buf);
+    if (settings_get_str("cam2_rot", buf, sizeof buf)) s_rot_off = atoi(buf);
     if (settings_get_str("cam_awb", buf, sizeof buf)) s_awb = strcmp(buf, "off") != 0;
     if (settings_get_str("cam_wb", buf, sizeof buf)) s_wb_mode = atoi(buf);
     if (s_xclk_mhz < 6 || s_xclk_mhz > 24) s_xclk_mhz = 10;
@@ -142,7 +142,7 @@ esp_err_t camera_init(void)
         .pixel_format = PIXFORMAT_JPEG,
         .frame_size = PHOTO_SIZE,        /* buffers are sized for the largest frame we use */
         .jpeg_quality = s_quality,
-        .fb_count = 1,
+        .fb_count = 2,
         .fb_location = CAMERA_FB_IN_PSRAM,
         .grab_mode = CAMERA_GRAB_LATEST,
         .sccb_i2c_port = 0,
@@ -194,7 +194,7 @@ const uint16_t *camera_preview(int display_rot, int *w, int *h)
     return dst;
 }
 
-esp_err_t camera_capture_jpeg(int display_rot, uint8_t **jpeg, size_t *len)
+static esp_err_t capture_impl(int display_rot, uint8_t **jpeg, size_t *len)
 {
     if (!s_ready) return ESP_ERR_INVALID_STATE;
     sensor_t *s = esp_camera_sensor_get();
@@ -207,7 +207,17 @@ esp_err_t camera_capture_jpeg(int display_rot, uint8_t **jpeg, size_t *len)
         camera_fb_t *fb = esp_camera_fb_get();
         if (fb) esp_camera_fb_return(fb);
     }
-    camera_fb_t *fb = esp_camera_fb_get();
+    /* take the first complete JPEG (FFD8 ... FFD9) of the right size; a frame whose start or end was lost to a
+     * DMA overrun ("NO-SOI") is thrown away and the next one tried */
+    camera_fb_t *fb = NULL;
+    for (int tries = 0; tries < 4; tries++) {
+        fb = esp_camera_fb_get();
+        if (fb && fb->format == PIXFORMAT_JPEG && fb->len > 4 && fb->width == PHOTO_W && fb->height == PHOTO_H &&
+            fb->buf[0] == 0xFF && fb->buf[1] == 0xD8 && fb->buf[fb->len - 2] == 0xFF && fb->buf[fb->len - 1] == 0xD9) break;
+        ESP_LOGW(TAG, "photo frame %d unusable (%s), trying again", tries, fb ? "bad JPEG" : "timeout");
+        if (fb) esp_camera_fb_return(fb);
+        fb = NULL;
+    }
     esp_err_t err = ESP_FAIL;
     uint8_t *copy = NULL;
     size_t copy_len = 0;
@@ -270,17 +280,43 @@ esp_err_t camera_capture_jpeg(int display_rot, uint8_t **jpeg, size_t *len)
     return ESP_OK;
 }
 
+/* The grab, JPEG decode, rotation and re-encode run in a task of their own with a big stack, whoever calls
+ * (touch task, HTTP server task, console): none of those has stack to spare for the JPEG codec. */
+typedef struct {
+    int rot;
+    uint8_t **jpeg;
+    size_t *len;
+    esp_err_t err;
+    TaskHandle_t waiter;
+} capture_job_t;
+
+static void capture_task(void *arg)
+{
+    capture_job_t *j = arg;
+    j->err = capture_impl(j->rot, j->jpeg, j->len);
+    xTaskNotifyGive(j->waiter);
+    vTaskDelete(NULL);
+}
+
+esp_err_t camera_capture_jpeg(int display_rot, uint8_t **jpeg, size_t *len)
+{
+    capture_job_t j = { .rot = display_rot, .jpeg = jpeg, .len = len, .err = ESP_FAIL, .waiter = xTaskGetCurrentTaskHandle() };
+    if (xTaskCreate(capture_task, "cam_shot", 16384, &j, 4, NULL) != pdPASS) return ESP_ERR_NO_MEM;
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return j.err;
+}
+
 void camera_set_vflip(bool on)
 {
     s_vflip = on;
-    settings_set_str("cam_vflip", on ? "on" : "off");
+    settings_set_str("cam2_vflip", on ? "on" : "off");
     if (s_ready) apply_orientation();
 }
 
 void camera_set_hmirror(bool on)
 {
     s_hmirror = on;
-    settings_set_str("cam_mirror", on ? "on" : "off");
+    settings_set_str("cam2_mirror", on ? "on" : "off");
     if (s_ready) apply_orientation();
 }
 
@@ -337,7 +373,7 @@ bool camera_set_rot(int deg)
     s_rot_off = deg;
     char b[8];
     snprintf(b, sizeof b, "%d", deg);
-    settings_set_str("cam_rot", b);
+    settings_set_str("cam2_rot", b);
     return true;
 }
 

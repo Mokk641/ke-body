@@ -17,6 +17,8 @@
 
 | v6 | `release/ke-body-v6.bin`（合并）<br>`release/ke-body-app-v6.bin`（**只含应用，推荐**） | 第六期：聊天页改成 iOS 暗色 iMessage 风格；相机转正/调色/防条纹/先预览再决定；寄给电脑更可靠（ARP 唤醒 + 重试 + 关省电）；发送中按钮置灰；SD 只探测一次；`color` / `colortest` 颜色校准工具 | 编译通过、主机测试通过，**未上板** |
 
+| v6.1 | `release/ke-body-v6.1.bin`（合并）<br>`release/ke-body-app-v6.1.bin`（**只含应用，推荐**） | 修拍照崩溃（cam_task 栈溢出）；相机默认方向改成实测值；顶栏脸和「克」在最左；底栏透明；白色主题 + `theme auto`（默认，夜间自动变暗） | 编译通过、主机测试通过，**未上板** |
+
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
 ---
@@ -52,7 +54,7 @@
 | 13 | 横屏 | `rotate 0|90|180|270`、`POST /rotate`，存 NVS，**默认 90**。触摸坐标跟着转；`touchlog on` 打印坐标 |
 | 14 | 亮度 | `bright <5-100>`、`POST /brightness`，存 NVS，默认 80 |
 | 15 | 夜间变暗 | 连网后 NTP 对时（`ntp.aliyun.com`，备用 `pool.ntp.org`，东八区）。`night 23:00 07:00 20` 存 NVS，`night off` 关闭。**默认开，23:00–07:00 亮度 20** |
-| 16 | 黑底白字 | `theme dark|light`、`POST /theme`，存 NVS，**默认 dark**（气泡深色底浅色字） |
+| 16 | 黑底白字 | `theme dark|light`、`POST /theme`，存 NVS（v6.1 起默认改为 `auto`，见第六期补丁） |
 
 ### 第四期
 
@@ -97,6 +99,18 @@
 | 40 | 发送中防连点 | 一条消息/照片在路上时，快捷语、表情、「寄给克」「删除」置灰、点了没反应，送完（或最终失败）恢复；寄给克还在 `camui_gallery_send` 里再挡一次，一张照片只会发一份 |
 | 41 | SD 卡只探测一次 | 没插卡时 `sdmmc_card_init failed (0x107)` 只在第一次进相机/相册时出现一次；之后插了卡：串口 `photos rescan` |
 | 42 | 颜色 | `GFX_RGB` 从截断改成四舍五入；灰色用新的 `GFX_GREY`（R=B、G 由同一级扩展，保证不偏色）；见 §3.6 |
+
+### v6.1 补丁
+
+| # | 内容 | 说明 |
+|---|------|------|
+| 43 | 拍照崩溃 | 现象：`A stack overflow in task cam_task`。`cam_task` 是 esp32-camera 驱动自己的任务，栈只有默认的 2048 字节，一遇到丢帧（`NO-SOI`）要打日志就溢出重启。`sdkconfig.defaults` 里加了 `CONFIG_CAMERA_TASK_STACK_SIZE=6144`。**自己编译的人要先删掉旧的 `sdkconfig`（`sdkconfig.defaults` 只在没有 `sdkconfig` 时生效）**。另外，解码 / 旋转 / 重新编码挪到了自己的任务 `cam_shot`（栈 16KB），不论谁调用（触摸任务、HTTP 任务、串口）都不再占它们的栈 |
+| 44 | NO-SOI | `NO-SOI/NO-SO` = 驱动没在帧头找到 JPEG 起始标记 FFD8，帧被丢掉，最常见的原因是 DMA 写 PSRAM 没跟上、数据丢了一截（也是竖条纹的同一类根源）。这版：摄像头帧缓冲 1 → 2 个；拍照时要求拿到**完整**的 JPEG（FFD8…FFD9，尺寸对）才收，不行就丢掉再取，最多 4 次，串口能看到 `photo frame N unusable`。是否根治要上板看 `NO-SOI` 还出不出现 |
+| 45 | 相机默认方向 | 按你的实测：`cam rot 0` + **`vflip off` + `mirror on`** 为默认（"靠传感器自己翻转"）。注意传感器只能上下/左右翻，**不能转 90°**，所以 `rotate 90/270` 时仍要软件转一个四分之一圈（预览和拍下的 JPEG，重新编码）；`rotate 0/180` 时完全不走软件旋转。`vflip / mirror / rot` 用了新的 NVS 键（`cam2_*`），所以之前试验时存的 `cam rot 180` 等设置**自动作废**，不需要手动 `cam rot 0` |
+| 46 | 顶栏 | 「⌄」、小圆脸、「克」、绿点都在**最左**，右边空（peek 开着时才有小眼睛）。「⌄」在最左边；在顶栏任意位置下滑也返回；顶栏高度 56 → 48 |
+| 47 | 底栏透明 | 没有胶囊背景，只有「+」和相机两个细线图标浮在聊天上面，图标外面描了一圈页面底色的边保证压在气泡上也看得清；聊天内容可以滚到图标下面（最新一条仍停在图标上方）；展开面板时这一条变成面板同色，「+」变 ×。图标之间的空白区域属于聊天区（可拖动、可长按说话） |
+| 48 | 白色主题 | 照 iOS 浅色 iMessage：背景 `#FFFFFF`，克 `#E9E9EB` 黑字，她 `#007AFF` 白字，顶栏/面板 `#F2F2F7`，分隔线 `#D1D1D6`，图标深灰，脸页白底黑脸 |
+| 49 | `theme light|dark|auto` | **默认 `auto`**：白天白色，进入夜间时段（`night` 设置，默认 23:00–07:00，需要 NTP 对过时）自动切暗色，早上切回；`night off` 或还没对时 = 一直白色。`theme light` / `theme dark` 固定不变。`POST /theme` 同样接受 `auto`。NVS 键改成了 `theme_mode`，所以之前存过的 `dark` 不会让新默认失效 |
 ---
 
 ## 2. 烧录（Windows）
@@ -168,6 +182,7 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body
 | `autorotate on|off` | 随手转屏（默认关；轴向未验证） |
 | `cam on|off|shot|gallery|status` | 进/出相机、拍一张、进相册、打印相机设置 |
 | `cam xclk <MHz>` / `cam quality <n>` / `cam awb on|off` / `cam wb <auto\|sunny\|cloudy\|office\|home>` / `cam rot <0\|90\|180\|270>` | 相机画质调节，全部存 NVS，对比着试（见 §3.7） |
+| `theme light\|dark\|auto` | 主题（默认 auto，夜间时段自动暗色），存 NVS |
 | `color` / `color <gamma%> <r%> <g%> <b%>` / `color reset` / `colortest` | 屏幕颜色校准、色块对照屏（见 §3.6） |
 | `cam vflip on|off` / `cam mirror on|off` | 画面上下翻/左右镜像，存 NVS（默认 vflip on，同官方例子） |
 | `peek on|off` | 「让克看看」远程拍照开关，存 NVS，默认关 |
@@ -188,7 +203,7 @@ curl -X POST -H "Content-Type: audio/wav" --data-binary @hello.wav http://192.16
 curl -X POST --data-binary "30"    http://192.168.1.23/volume            # 0-100，0 静音，100 最大
 curl -X POST --data-binary "90"    http://192.168.1.23/rotate            # 0 / 90 / 180 / 270，存 NVS
 curl -X POST --data-binary "40"    http://192.168.1.23/brightness        # 5-100，存 NVS（低于 5 按 5）
-curl -X POST --data-binary "light" http://192.168.1.23/theme             # dark / light，存 NVS
+curl -X POST --data-binary "auto"  http://192.168.1.23/theme             # light / dark / auto（夜间自动暗色），存 NVS
 curl -X POST --data-binary "我想你"  http://192.168.1.23/heard             # 她说的话（语音转文字结果）进聊天右侧，不闪
 curl -X POST -H "Content-Type: application/json" --data-binary @buttons.json http://192.168.1.23/buttons
         # {"text":["想你了","抱抱","在干嘛","晚安"],"emoji":["(´ω`)","(≧▽≦)","♡","💧"],"shake":"想你了"}
@@ -271,8 +286,7 @@ v5 反馈「墨绿显示成亮薄荷绿、奶米色显示成灰白」。我在�
 |------|--------|
 | 满屏竖条纹 | `cam xclk 10`（默认）；还有就 `cam xclk 8` 或 `cam xclk 6`；条纹和画质此消彼长，帧率会更低 |
 | 画面发灰、偏紫偏粉 | `cam awb on`（默认）、`cam wb sunny/cloudy/office/home` 换一个试；OV5640 模组如果**没有红外截止滤光片**，白平衡永远救不回来（发紫发粉的典型原因），那是硬件 |
-| 照片躺着 / 倒着 | `cam rot 90`、`cam rot 180`、`cam rot 270`（在自动转正的基础上再转，存 NVS） |
-| 上下颠倒或左右镜像 | `cam vflip on|off`、`cam mirror on|off`（先转正再翻） |
+| 照片躺着 / 倒着 | 默认（v6.1）已是 `vflip off` + `mirror on` + `rot 0`（实测）；仍不对再 `cam vflip` / `cam mirror`（传感器自己翻，最省）或 `cam rot 90/180/270`（软件转，会重新编码，180 会让整张照片多走一遍软件旋转，尽量别用） |
 | JPEG 太糊 / 太大 | `cam quality 6`（更好更大）…`cam quality 20`（更小） |
 
 `cam status` 打印当前所有设置。
@@ -452,7 +466,14 @@ v3.3：横屏 270、黑底、亮度、夜间变暗、喇叭（TCA9554 P7 使能�
 4. **串口中文**：见 §3.1。IDF linenoise 的 `sanitize()` 用 `isprint()` 把 ≥0x80 的字节全删，不是终端 GBK 的问题；自带行编辑器已经替换。上板后 `msg 想你了` 应该能进聊天并发到 bridge。
 5. 串口现在跑在我们自己的任务里（栈 8KB，`cam on` 之类耗栈的命令也在这个任务里跑）。和之前相比只少了 Tab 补全，其它命令不变。
 
-### 第六期（v6，全部未上板）
+### v6.1（全部未上板）
+
+1. **崩溃**：栈加到 6144 后拍照不应再重启；请看 `cam_task` 还有没有栈溢出、`NO-SOI` 是否还出现、`photo frame N unusable` 出现几次。`NO-SOI` 的根因（10MHz XCLK 下为什么还丢帧头）我没法在没有实物时查清，加了双缓冲和"只收完整帧"两个缓解；如果仍然频繁，试 `cam xclk 8` / `cam xclk 16` 对比，并把日志发我。
+2. **相机方向**用你的实测值做默认，但软件转 90° 的方向（rotate 270 → 逆时针）仍是推导的；如果 rotate 270 下取景现在是对的，说明推导没错。
+3. **白天/夜间自动切换**依赖 `light_night_active()`：NTP 没对上时它是"不在夜间"，所以会一直是白色；每秒检查一次，切换时整屏重绘会闪一下。
+4. **透明底栏**的图标描边、聊天内容滚到图标下面的观感只在主机预览看过。深色主题的描边是黑色，压在蓝色气泡上是一圈黑边，浅色主题是白边。
+
+### 第六期（v6，已上板）
 
 只在电脑上验证过：编译通过（应用 3.8MB，6MB 分区剩 38%）、分区表和 bootloader 与 v4.1 逐字节相同、主机测试通过（触摸/页面、颜色、图像旋转）、画面用 `host_preview` 渲染后看过。**上板后请确认**：
 

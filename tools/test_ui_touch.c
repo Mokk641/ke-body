@@ -45,6 +45,8 @@ esp_err_t settings_set_str(const char *k, const char *v)
 }
 static int n_new_msg;
 void app_on_new_message(void) { n_new_msg++; }
+static bool s_night;
+bool light_night_active(void) { return s_night; }
 
 /* ---- app callbacks recorded ----------------------------------------------- */
 static int taps[16], n_taps, n_long_press, n_long_release, n_swipes, last_swipe;
@@ -355,6 +357,28 @@ int main(void)
         snap();
         CHECK(!st->blink, "blink off leaves the eyes open");
     }
+
+    /* ---- theme: default auto = white by day, dark during the night schedule ---- */
+    snap();
+    CHECK(!strcmp(ui_get_theme(), "auto") && st->theme == UI_THEME_LIGHT, "default theme mode is auto and it is light by day");
+    s_night = true; ticks(25); snap();
+    CHECK(st->theme == UI_THEME_DARK, "night schedule active -> dark");
+    s_night = false; ticks(25); snap();
+    CHECK(st->theme == UI_THEME_LIGHT, "morning -> light again");
+    ui_set_theme("dark"); s_night = false; ticks(25); snap();
+    CHECK(!strcmp(ui_get_theme(), "dark") && st->theme == UI_THEME_DARK, "theme dark stays dark by day");
+    ui_set_theme("light"); s_night = true; ticks(25); snap();
+    CHECK(st->theme == UI_THEME_LIGHT, "theme light stays light at night");
+    CHECK(ui_set_theme("purple") != ESP_OK, "unknown theme rejected");
+    ui_set_theme("auto"); s_night = false; ticks(25);
+
+    /* ---- transparent bottom strip: chat underneath, only the two icons are buttons ---- */
+    to_chat();
+    snap();
+    CHECK(ui_hit_test(st, 240, gfx_height() - 10) == UI_HIT_CHAT, "bottom strip between the icons belongs to the chat");
+    CHECK(ui_hit_test(st, 20, gfx_height() - 10) == UI_HIT_PLUS && ui_hit_test(st, gfx_width() - 20, gfx_height() - 10) == UI_HIT_CAM_BTN,
+          "+ at the bottom left, camera at the bottom right");
+    CHECK(ui_hit_test(st, 20, 20) == UI_HIT_TOP_BACK && ui_hit_test(st, 70, 20) == UI_HIT_TOPBAR, "top bar: ⌄ at the far left, face + name are part of the bar");
 
     /* ---- sending: buttons are ignored while a message / photo is on its way ---- */
     to_chat();

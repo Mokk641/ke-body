@@ -251,7 +251,7 @@ static esp_err_t theme_post(httpd_req_t *req)
     char body[16];
     if (read_body(req, body, sizeof body) < 0) return ESP_FAIL;
     if (ui_set_theme(body) != ESP_OK) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "theme must be dark or light");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "theme must be light, dark or auto");
     }
     ESP_LOGI(TAG, "theme: %s", body);
     return ok(req);
