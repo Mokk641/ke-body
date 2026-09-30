@@ -578,7 +578,9 @@ void ui_touch(bool down, int x, int y)
             set_pressed(UI_HIT_NONE);
         }
         if (s_dragging && s_hit == UI_HIT_CHAT) {
-            ui_scroll_by(s_last_y - y);
+            /* content follows the finger: dragging down reveals older messages
+             * (draw_chat shifts the messages down as scroll grows) */
+            ui_scroll_by(y - s_last_y);
         }
         s_last_x = x;
         s_last_y = y;
@@ -602,9 +604,11 @@ void ui_touch(bool down, int x, int y)
             if (s_hit == UI_HIT_GAL_VIEW && abs(total_dx) > 40) app_on_swipe(total_dx < 0 ? 1 : -1);
             return;
         }
-        /* tap */
+        /* tap. The touch controller reports no coordinates once the finger is up, so the
+         * caller's x,y are meaningless here: test with the last position seen while it
+         * was down (same source as s_hit, so a plain tap always matches). */
         lock();
-        int hit_up = ui_hit_test(s_state, x, y);
+        int hit_up = ui_hit_test(s_state, s_last_x, s_last_y);
         unlock();
         if (hit_up != s_hit) return;
         app_on_tap(s_hit);

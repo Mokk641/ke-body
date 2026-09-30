@@ -231,10 +231,20 @@ void app_on_touch_activity(void)
 
 static void touch_task(void *arg)
 {
+    bool was_down = false;
+    uint16_t lx = 0, ly = 0;   /* last position seen while the finger was down */
+    int miss = 0;
     for (;;) {
         uint16_t x = 0, y = 0;
         bool down = board_touch_read(&x, &y);
-        ui_touch(down, x, y);
+        if (down) {
+            lx = x; ly = y; miss = 0; was_down = true;
+        } else if (was_down && ++miss < 2) {
+            down = true;       /* the FT6336 sometimes reports "no touch" for one scan mid-press: don't release yet */
+        } else {
+            was_down = false; miss = 0;
+        }
+        ui_touch(down, lx, ly);
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }

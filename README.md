@@ -11,7 +11,8 @@
 | v3.1 | `release/ke-body-v3.1.bin` | + 不用耳朵的音频诊断：`audio test` 内部回环峰值、`audio mic`、`audio slot`、`gpio` 命令 | 已上板：回环 R=8000 证明 I2S/DAC 通；**找到功放使能 = TCA9554 P7** |
 | v3.2 | `release/ke-body-v3.2.bin` | + 开机接管 TCA9554 P7（播放时开功放、空闲关）；音量改为分贝映射 | 已上板：出声；默认 10 太小 |
 | v3.3 | `release/ke-body-v3.3.bin` | + 默认音量 18；表情字库补 ˍ 皿 ﹏；💢 💧 做成线条图标 | 已上板：屏幕、触摸、横屏 270、黑底、亮度、夜间变暗、喇叭、回环、麦克风都正常 |
-| v4 | `release/ke-body-v4.bin`（合并）<br>`release/ke-body-app-v4.bin`（只含应用） | + 第四期：聊天记录 + 快捷按钮、动画、QMI8658 摇晃/扣桌、静音提醒、相机/相册/寄照片/远程 /snap、bridge 收 /msg /photo | **未在真机运行过**，见 §6 |
+| v4 | `release/ke-body-v4.bin`（合并）<br>`release/ke-body-app-v4.bin`（只含应用） | + 第四期：聊天记录 + 快捷按钮、动画、QMI8658 摇晃/扣桌、静音提醒、相机/相册/寄照片/远程 /snap、bridge 收 /msg /photo | 已上板：显示、横屏、`msg` 发到 bridge 正常；**屏幕按钮点了没反应**（v4.1 修） |
+| v4.1 | `release/ke-body-v4.1.bin`（合并）<br>`release/ke-body-app-v4.1.bin`（只含应用） | 修：按钮/相机/相册点击无反应；聊天上下滑方向反了；串口能输入中文 | 主机测试通过，**未上板** |
 
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
@@ -80,10 +81,10 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x0 release/ke-body-v3.
 **第四期起只刷应用区**（保留 NVS 里的所有设置）：
 
 ```
-python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body-app-v4.bin
+python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body-app-v4.1.bin
 ```
 
-注意：v4 改了分区表（多了一个 4MB 的 `storage` 分区给照片用），**从 v3.x 升到 v4 的第一次必须烧合并版** `ke-body-v4.bin`（从 0x0），之后的 v4.x 才能只刷 0x10000。合并版从 0x0 整片写入，NVS 区（0x9000）会被写成 0xFF，也就是**合并版会清掉 Wi-Fi、server 等设置**，烧完要重新 `wifi` / `server`；只刷应用区不会。
+注意：v4 改了分区表（多了一个 4MB 的 `storage` 分区给照片用），**从 v3.x 升到 v4 的第一次必须烧合并版** `ke-body-v4.bin`（从 0x0），之后的 v4.x 才能只刷 0x10000。**v4 → v4.1 分区表没变（已逐字节对比），直接刷应用区即可，Wi-Fi 等设置保留。**合并版从 0x0 整片写入，NVS 区（0x9000）会被写成 0xFF，也就是**合并版会清掉 Wi-Fi、server 等设置**，烧完要重新 `wifi` / `server`；只刷应用区不会。
 
 （旧版本文件都保留，换文件名即可回退。）
 
@@ -94,13 +95,15 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body
 
 注意：上面是 esptool **v5** 的写法（本仓库用 esptool v5.4.0 生成固件）。如果你装的是 esptool v4，子命令是下划线：`write_flash`。想快一点可以加 `-b 921600`。
 
-`release/ke-body-vX.bin` 内容 = bootloader（0x0）+ 分区表（0x8000）+ 应用（0x10000），中间用 0xFF 填充；`ke-body-app-vX.bin` 只有应用（烧到 0x10000）。v4 合并版约 3.4MB。
+`release/ke-body-vX.bin` 内容 = bootloader（0x0）+ 分区表（0x8000）+ 应用（0x10000），中间用 0xFF 填充；`ke-body-app-vX.bin` 只有应用（烧到 0x10000）。v4 / v4.1 合并版约 3.4MB。
 
 ---
 
 ## 3. 配网与使用
 
 ### 3.1 串口命令
+
+> v4.1 起串口控制台用自带的行编辑器（`main/lineedit.c`），**可以输中文**（`msg 想你了`、`say 你好`）：IDF 自带的 linenoise 会把所有高位字节（UTF-8）删掉，命令行里只要有中文就变成空参数，所以换掉了。需要终端编码设为 UTF-8（PuTTY: Window → Translation → UTF-8；Tera Term: Setup → Terminal → Kanji 选 UTF-8；Windows Terminal / miniterm 默认就是）。输入不是合法 UTF-8 时会提示。上下箭头有历史（16 条），退格按整个字符删；**没有 Tab 补全**。需要终端支持 ANSI 转义（上面几个都支持）。
 
 烧录完，用任意串口终端（PuTTY / Tera Term / `python -m serial.tools.miniterm COM3 115200`）打开同一个 COM 口，会看到 `ke-body>` 提示符：
 
@@ -308,7 +311,8 @@ main/
   kb_font.h / fonts/   位图字体
   wifi_mgr.c/.h   NVS 凭据 + STA 连接 + 自动重连
   http_api.c/.h   /ping /face /say /play /volume /rotate /brightness /theme
-  console_cmd.c/.h  串口命令
+  console_cmd.c/.h  串口命令 + 控制台任务
+  lineedit.c/.h   UTF-8 行编辑器（纯 C）
 components/esp_lcd_st7796/   官方 ST7796 驱动（原样拷贝）
 components/es8311/           官方 Arduino 库里的 Espressif es8311 驱动（I2C 层改为 i2c_master）
 components/XPowersLib/       官方例子用的 AXP2101 驱动（MIT）
@@ -317,6 +321,7 @@ pc/ke_bridge.py              电脑端：收录音 /hear、文字 /msg、照片 
 pc/ke_send.py                电脑端：给板子发 face / say / heard / play / volume / rotate / brightness / theme / buttons / anim / chime / peek / snap / ping
 tools/gen_fonts.py           字体生成脚本
 tools/host_preview.c         电脑上渲染画面到 PPM（支持横竖屏、深浅色）
+tools/run_host_tests.sh      主机端测试（行编辑器、触摸状态机）；tools/test_*.c，tools/hoststubs/ 是 IDF 头文件的桩
 release/ke-body-vX.bin       合并固件（0x0）
 release/ke-body-app-vX.bin   只含应用（0x10000，第四期起）
 ```
@@ -346,6 +351,17 @@ gcc -O1 -Imain -o preview tools/host_preview.c main/gfx.c main/ui_render.c main/
 
 ---
 
+### 5.3 主机端测试（不需要板子）
+
+```
+tools/run_host_tests.sh [/path/to/esp-idf]
+```
+
+- `tools/test_lineedit.c`：串口行编辑器（中文/emoji 原样通过、退格删整字、历史、Ctrl-C/U、CRLF、超长）。
+- `tools/test_ui_touch.c`：把**真实的** `main/ui.c` 触摸状态机和 `main/ui_render.c` 命中测试在电脑上编译（`tools/hoststubs/` 里桩掉 FreeRTOS、定时器），模拟点按、松手不带坐标、长按、拖动、聊天滑动、相机/相册按钮和左右滑。这个测试在 v4 的 `ui.c` 上会失败（1280 个按钮位置全部点不中），在 v4.1 上全过。需要 ESP-IDF 里的 cJSON 源码。
+
+---
+
 ## 6. 未验证事项（没有实物，请上板确认）
 
 ### 已上板验证
@@ -357,9 +373,17 @@ v3 / v3.1：AXP2101 应答、电源轨全开；ES8311 寄存器与官方驱动�
 
 v3.3：横屏 270、黑底、亮度、夜间变暗、喇叭（TCA9554 P7 使能）、`audio test` 回环 R=8000、麦克风有信号。按住录音上传还没测。
 
-### 第四期（v4，未上板）
+### v4.1 修复（主机测试通过，未上板）
 
-1. **触摸坐标**：第四期开始真的用坐标（按钮、滑动、相册）。方向换算按官方表写，第三期没验证。上板先 `touchlog on`，按四个角看换算坐标对不对；错了的话按钮会点不准，告诉我具体对应关系我改 `board_touch_read()`。
+1. **按钮点了没反应**：触摸控制器松手后不再报坐标，`touch_task` 传给 `ui_touch` 的是 (0,0)，v4 用它做松手时的命中测试，得到的是「脸」，和按下时的按钮不一致，所有点击被丢弃。现在松手一律用最后一次按下时的坐标（`ui.c`），触摸任务也保留最后坐标。
+2. **触摸任务容忍漏读一次**：FT6336 偶尔会在按住途中某一次扫描报「无触点」，v4 会当成松手（长按录音会提前结束、拖动会中断）。现在连续两次读不到才算松手，松手识别慢约 30ms。
+3. **聊天上下滑方向反了**（自查发现，你还没碰到）：v4 往下拖是更靠近最新，与手机相反。现在手指往下拖 = 看更早的消息，往上拖回最新；新消息来了自动回到底部。
+4. **串口中文**：见 §3.1。IDF linenoise 的 `sanitize()` 用 `isprint()` 把 ≥0x80 的字节全删，不是终端 GBK 的问题；自带行编辑器已经替换。上板后 `msg 想你了` 应该能进聊天并发到 bridge。
+5. 串口现在跑在我们自己的任务里（栈 8KB，`cam on` 之类耗栈的命令也在这个任务里跑）。和之前相比只少了 Tab 补全，其它命令不变。
+
+### 第四期（v4，v4.1 之外的部分仍未验证）
+
+1. **触摸坐标**：rot270 下 `touchlog` 显示按钮行落在 y≈261–283，和布局一致，方向换算看来是对的；其它旋转方向（0/90/180）没验证。
 2. **相机**：esp32-camera 在这块板上的初始化是按官方 esp_camera_port.cpp 写的，但改成了 JPEG 模式 + 尺寸切换（取景 HVGA、拍照 SXGA），没实测；看串口 `camera: sensor PID 0x5640`。取景帧率估计 5–10 fps。画面上下/左右不对用 `cam vflip` / `cam mirror`。
 3. **SD 卡**：1 线 SDMMC，FAT32 卡；没插卡走内部 4MB 分区（第一次会格式化，几秒）。
 4. **QMI8658**：地址 0x6B/0x6A 自动探测；摇晃阈值 1.9g 两次/0.9 秒；「屏幕朝下」假设芯片 Z 轴朝屏幕外（az ≈ +1g 时正放），反了用 `imu invert on`。自动转屏的轴向映射未验证，默认关。

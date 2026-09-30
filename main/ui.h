@@ -49,7 +49,8 @@ void ui_set_frame(const uint16_t *frame, int w, int h);   /* image shown on came
 void ui_set_cam_text(const char *utf8);
 void ui_set_gallery_pos(int index, int count);
 
-/* touch dispatch (from the touch task): x,y in current rotation frame */
+/* touch dispatch (from the touch task): x,y in current rotation frame.
+ * x,y are ignored when down == false; the last position seen while down is used. */
 void ui_touch(bool down, int x, int y);
 
 /* snapshot for the host preview / tests */

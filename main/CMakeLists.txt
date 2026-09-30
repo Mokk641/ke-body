@@ -10,6 +10,7 @@ idf_component_register(
         "wifi_mgr.c"
         "http_api.c"
         "console_cmd.c"
+        "lineedit.c"
         "audio.c"
         "settings.c"
         "uploader.c"
@@ -43,6 +44,7 @@ idf_component_register(
         esp32-camera
         fatfs
         esp_driver_sdmmc
+        esp_driver_usb_serial_jtag
         sdmmc
         wear_levelling
         vfs

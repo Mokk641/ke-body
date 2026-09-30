@@ -10,13 +10,19 @@
 #include "imu.h"
 #include "cam_ui.h"
 #include "camera.h"
+#include "lineedit.h"
+#include "gfx.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_console.h"
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_system.h"
 #include "esp_log.h"
 
@@ -344,16 +350,84 @@ static int cmd_audio(int argc, char **argv)
     return 1;
 }
 
+/* ---- console transport: our own UTF-8 aware line editor instead of the IDF REPL ----
+ * The IDF REPL (linenoise) deletes every byte >= 0x80 from the line, which makes it
+ * impossible to type Chinese. Set-up below mirrors esp_console_new_repl_usb_serial_jtag(). */
+
+static int console_read_byte(void)
+{
+    unsigned char b;
+    for (;;) {
+        if (read(STDIN_FILENO, &b, 1) == 1) return b;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+static void console_write(const char *s, size_t n)
+{
+    fwrite(s, 1, n, stdout);
+    fflush(stdout);
+}
+
+static bool valid_utf8(const char *s)
+{
+    while (*s) {
+        const char *before = s;
+        uint32_t cp = gfx_utf8_next(&s);
+        if (cp == 0xFFFD && (unsigned char)before[0] != 0xEF) return false;   /* 0xEF.. = a real U+FFFD */
+    }
+    return true;
+}
+
+static void console_task(void *arg)
+{
+    static lineedit_t le;
+    le.read = console_read_byte;
+    le.write = console_write;
+    le.prompt = "ke-body> ";
+    setvbuf(stdin, NULL, _IONBF, 0);
+    printf("\r\nType 'help' for the command list. Up/Down = history. Set your terminal to UTF-8 to type Chinese.\r\n");
+
+    char line[LINEEDIT_MAX];
+    for (;;) {
+        int n = lineedit_read(&le, line, sizeof line);
+        if (n <= 0) continue;
+        if (!valid_utf8(line)) {
+            printf("warning: input is not valid UTF-8 - set the terminal encoding to UTF-8 "
+                   "(PuTTY: Window > Translation; Tera Term: Setup > Terminal > Kanji)\n");
+        }
+        int ret;
+        esp_err_t err = esp_console_run(line, &ret);
+        if (err == ESP_ERR_NOT_FOUND) {
+            printf("Unrecognized command\n");
+        } else if (err == ESP_ERR_INVALID_ARG) {
+            /* empty command */
+        } else if (err == ESP_OK && ret != ESP_OK) {
+            printf("Command returned non-zero error code: 0x%x (%s)\n", ret, esp_err_to_name(ret));
+        } else if (err != ESP_OK) {
+            printf("Internal error: %s\n", esp_err_to_name(err));
+        }
+    }
+}
+
 esp_err_t console_cmd_start(void)
 {
-    esp_console_repl_t *repl = NULL;
-    esp_console_repl_config_t cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    cfg.prompt = "ke-body>";
-    cfg.max_cmdline_length = 256;
+    /* Terminals send CR for Enter; move the caret to the start of the next line on LF */
+    usb_serial_jtag_vfs_set_rx_line_endings(ESP_LINE_ENDINGS_CR);
+    usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+    fcntl(fileno(stdout), F_SETFL, 0);
+    fcntl(fileno(stdin), F_SETFL, 0);
 
-    esp_console_dev_usb_serial_jtag_config_t hw = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
-    esp_err_t err = esp_console_new_repl_usb_serial_jtag(&hw, &cfg, &repl);
+    usb_serial_jtag_driver_config_t ucfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    esp_err_t err = usb_serial_jtag_driver_install(&ucfg);
     if (err != ESP_OK) return err;
+
+    esp_console_config_t ccfg = ESP_CONSOLE_CONFIG_DEFAULT();
+    ccfg.max_cmdline_length = LINEEDIT_MAX;
+    err = esp_console_init(&ccfg);
+    if (err != ESP_OK) return err;
+
+    usb_serial_jtag_vfs_use_driver();
 
     esp_console_register_help_command();
     const esp_console_cmd_t cmds[] = {
@@ -384,5 +458,7 @@ esp_err_t console_cmd_start(void)
     for (unsigned i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         ESP_ERROR_CHECK(esp_console_cmd_register(&cmds[i]));
     }
-    return esp_console_start_repl(repl);
+    /* stack: camera / SD commands run on this task */
+    if (xTaskCreate(console_task, "console", 8192, NULL, 2, NULL) != pdPASS) return ESP_FAIL;
+    return ESP_OK;
 }
