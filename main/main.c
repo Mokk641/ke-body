@@ -29,6 +29,7 @@
 #include "app_actions.h"
 #include "imu.h"
 #include "cam_ui.h"
+#include "picview.h"
 
 static const char *TAG = "main";
 
@@ -139,6 +140,10 @@ void app_on_tap(int hit)
     }
     if (hit >= UI_HIT_EMOJI_BTN0 && hit < UI_HIT_EMOJI_BTN0 + UI_MAX_EMOJI_BTN) {
         if (ui_button_text(true, hit - UI_HIT_EMOJI_BTN0, buf, sizeof buf)) app_send_text(buf);
+        return;
+    }
+    if (hit >= UI_HIT_PIC0 && hit < UI_HIT_PIC0 + UI_CHAT_MAX) {
+        picview_open(ui_msg_pic_id(hit - UI_HIT_PIC0));
         return;
     }
     switch (hit) {

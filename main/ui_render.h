@@ -34,10 +34,11 @@ typedef struct {
     uint8_t who;              /* chat_who_t */
     char face[UI_FACE_BUF];   /* CHAT_KE: the expression when this was sent (the avatar) */
     char text[UI_SAY_BUF];
-    uint8_t ink_slot;         /* 0 = a text message; n = handwriting, thumbnail in ink pool slot n-1 */
+    uint16_t ink_id;          /* 0 = a text message; else handwriting, its thumbnail in the ink pool (see ink_thumb_get) */
+    uint16_t pic_id;          /* 0 = none; else a picture from Ke, its thumbnail in the picture pool (see pics_get) */
 } chat_msg_t;
 
-typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK } ui_screen_t;
+typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK, UI_SCREEN_VIEWER } ui_screen_t;
 
 typedef struct { char text[UI_BTN_TEXT_LEN]; } ui_button_t;
 
@@ -111,10 +112,13 @@ enum {
     UI_HIT_INK_CLEAR,      /* 清空 */
     UI_HIT_INK_SEND,       /* 寄 */
     UI_HIT_INK_STRIP,      /* handwriting page: the strip of finished characters (drag sideways to scroll) */
+    UI_HIT_VIEW_EXIT,      /* picture viewer: tap anywhere to go back */
     UI_HIT_TEST_EXIT,      /* colour test pattern: tap anywhere to leave */
     UI_HIT_PANEL,          /* open panel: empty part (also the panel while it is still sliding) */
     UI_HIT_TEXT_BTN0 = 100,   /* + index into text_btn */
     UI_HIT_EMOJI_BTN0 = 200,  /* + index into emoji_btn (absolute, not per page) */
+    UI_HIT_MUSIC_ROW0 = 300,  /* + index into the song list (music list page) */
+    UI_HIT_PIC0 = 400,        /* + index of a chat message that is a picture from Ke (tap = full screen) */
 };
 
 /* Draw the whole screen into the gfx framebuffer (gfx_init must have been called). */

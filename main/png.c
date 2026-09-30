@@ -318,9 +318,8 @@ static void fit(int w, int h, int max_w, int max_h, int *ow, int *oh)
 {
     *ow = w; *oh = h;
     if (w > max_w || h > max_h) {
-        long sw = (long)max_w * 1000 / w, sh = (long)max_h * 1000 / h;
-        long s = sw < sh ? sw : sh;
-        *ow = (int)((long)w * s / 1000); *oh = (int)((long)h * s / 1000);
+        if ((long)max_w * h <= (long)max_h * w) { *ow = max_w; *oh = (int)((long)h * max_w / w); }
+        else { *oh = max_h; *ow = (int)((long)w * max_h / h); }
         if (*ow < 1) *ow = 1;
         if (*oh < 1) *oh = 1;
     }

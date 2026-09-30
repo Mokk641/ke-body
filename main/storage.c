@@ -167,17 +167,89 @@ esp_err_t storage_save_named(const char *name, const uint8_t *data, size_t len)
     return ESP_OK;
 }
 
+/* A name is either a photo in DCIM ("20260930-101500.jpg") or, for the SD card's other pictures, a path below the
+ * card's root that starts with '/' ("/holiday.jpg", "/FROMKE/20260930-101500.jpg"). */
+static bool name_path(const char *name, char *path, size_t n)
+{
+    if (name[0] == '/') {
+        if (!s_is_sd) return false;
+        snprintf(path, n, "%s%s", SD_MOUNT, name);
+    } else {
+        if (!s_dir[0]) return false;
+        snprintf(path, n, "%s/%s", s_dir, name);
+    }
+    return true;
+}
+
+bool storage_name_readonly(const char *name) { return name[0] == '/' && strncmp(name, "/FROMKE/", 8) != 0; }
+
+static bool picture_ext(const char *n)
+{
+    size_t l = strlen(n);
+    if (l < 5) return false;
+    return !strcasecmp(n + l - 4, ".jpg") || !strcasecmp(n + l - 4, ".png") || (l > 5 && !strcasecmp(n + l - 5, ".jpeg"));
+}
+
+int storage_list_extra(char (*names)[STORAGE_NAME_LEN], int start, int max)
+{
+    if (!s_is_sd || !s_card) return 0;
+    int n = start;
+    static const char *const dirs[] = { "", "/FROMKE" };
+    for (unsigned k = 0; k < 2 && n < max; k++) {
+        char dp[48];
+        snprintf(dp, sizeof dp, "%s%s", SD_MOUNT, dirs[k]);
+        DIR *d = opendir(dp);
+        if (!d) continue;
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL && n < max) {
+            size_t l = strlen(e->d_name);
+            if (e->d_name[0] == '.' || l + strlen(dirs[k]) + 2 >= STORAGE_NAME_LEN || !picture_ext(e->d_name)) continue;
+            if (e->d_type == DT_DIR) continue;
+            char full[STORAGE_NAME_LEN + 64];
+            snprintf(full, sizeof full, "%s/%s", dirs[k], e->d_name);
+            memcpy(names[n], full, STORAGE_NAME_LEN - 1);
+            names[n++][STORAGE_NAME_LEN - 1] = 0;
+        }
+        closedir(d);
+    }
+    if (n > start) qsort(names + start, (size_t)(n - start), STORAGE_NAME_LEN, cmp_names);
+    return n - start;
+}
+
+esp_err_t storage_save_fromke(const uint8_t *data, size_t len, const char *ext, char *name, size_t name_len)
+{
+    if (!s_is_sd || !s_card) return ESP_ERR_NOT_FOUND;
+    char dir[32];
+    snprintf(dir, sizeof dir, "%s/FROMKE", SD_MOUNT);
+    mkdir(dir, 0777);
+    time_t now = time(NULL);
+    struct tm t;
+    localtime_r(&now, &t);
+    char stamp[24];
+    if (t.tm_year + 1900 >= 2024) strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &t);
+    else snprintf(stamp, sizeof stamp, "%lu", (unsigned long)(esp_log_timestamp()));
+    char path[96];
+    snprintf(name, name_len, "%s.%s", stamp, ext);
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    FILE *f = fopen(path, "wb");
+    if (!f) return ESP_FAIL;
+    size_t w = fwrite(data, 1, len, f);
+    fclose(f);
+    if (w != len) { unlink(path); return ESP_FAIL; }
+    ESP_LOGI(TAG, "saved %s (%u bytes)", path, (unsigned)len);
+    return ESP_OK;
+}
+
 esp_err_t storage_read(const char *name, uint8_t **data, size_t *len)
 {
-    if (!s_dir[0]) return ESP_ERR_INVALID_STATE;
-    char path[80];
-    snprintf(path, sizeof path, "%s/%s", s_dir, name);
+    char path[112];
+    if (!name_path(name, path, sizeof path)) return ESP_ERR_INVALID_STATE;
     FILE *f = fopen(path, "rb");
     if (!f) return ESP_ERR_NOT_FOUND;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (sz <= 0 || sz > 2 * 1024 * 1024) { fclose(f); return ESP_ERR_INVALID_SIZE; }
+    if (sz <= 0 || sz > 8 * 1024 * 1024) { fclose(f); return ESP_ERR_INVALID_SIZE; }
     uint8_t *buf = heap_caps_malloc((size_t)sz, MALLOC_CAP_SPIRAM);
     if (!buf) { fclose(f); return ESP_ERR_NO_MEM; }
     size_t r = fread(buf, 1, (size_t)sz, f);
@@ -190,8 +262,7 @@ esp_err_t storage_read(const char *name, uint8_t **data, size_t *len)
 
 esp_err_t storage_delete(const char *name)
 {
-    if (!s_dir[0]) return ESP_ERR_INVALID_STATE;
-    char path[80];
-    snprintf(path, sizeof path, "%s/%s", s_dir, name);
+    char path[112];
+    if (storage_name_readonly(name) || !name_path(name, path, sizeof path)) return ESP_ERR_NOT_ALLOWED;
     return unlink(path) == 0 ? ESP_OK : ESP_FAIL;
 }

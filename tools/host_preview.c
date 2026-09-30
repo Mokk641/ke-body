@@ -127,7 +127,7 @@ int main(int argc, char **argv)
         ink_make_thumb(&ink, mask, &tw, &th);
         int slot = ink_thumb_store(mask, tw, th);
         chat_msg_t *m = &s->msgs[s->msg_count++];
-        m->who = CHAT_HER; snprintf(m->text, sizeof m->text, "[手写]"); m->ink_slot = (uint8_t)(slot + 1);
+        m->who = CHAT_HER; snprintf(m->text, sizeof m->text, "[手写]"); m->ink_id = (uint16_t)slot;
     }
     ui_render(s);
 

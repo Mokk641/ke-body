@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include "ui.h"
 #include "ui_render.h"
+#include "pics.h"
 #include "gfx.h"
 #include "fonts/fonts.h"
 #include "app_actions.h"
@@ -424,10 +425,10 @@ int main(void)
     n_ink_sent = 0;
     snap();
     CHECK(st->screen == UI_SCREEN_CHAT && st->ink->ndone == 0, "after 寄: back in the chat, paper cleared");
-    CHECK(st->msg_count > 0 && st->msgs[st->msg_count - 1].ink_slot > 0 && st->msgs[st->msg_count - 1].who == CHAT_HER, "her side shows the handwriting thumbnail");
+    CHECK(st->msg_count > 0 && st->msgs[st->msg_count - 1].ink_id > 0 && st->msgs[st->msg_count - 1].who == CHAT_HER, "her side shows the handwriting thumbnail");
     {
         int tw2, th2;
-        CHECK(ink_thumb_get(st->msgs[st->msg_count - 1].ink_slot - 1, &tw2, &th2) != NULL, "thumbnail is in the pool (%dx%d)", tw2, th2);
+        CHECK(ink_thumb_get(st->msgs[st->msg_count - 1].ink_id, &tw2, &th2) != NULL, "thumbnail is in the pool (%dx%d)", tw2, th2);
     }
     /* second round: write, tap 寄 directly (auto-commit), then empty 寄 */
     ui_ink_open();
@@ -518,11 +519,49 @@ int main(void)
         int slot = ink_thumb_store(m, 64, 32);
         ui_ke_ink(slot);
         snap();
-        CHECK(st->msg_count == before + 1 && st->msgs[st->msg_count - 1].who == CHAT_KE && st->msgs[st->msg_count - 1].ink_slot == slot + 1,
+        CHECK(st->msg_count == before + 1 && st->msgs[st->msg_count - 1].who == CHAT_KE && st->msgs[st->msg_count - 1].ink_id == slot,
               "handwriting from Ke arrives as a picture bubble on his side");
         CHECK(n_new_msg == nm + 1, "and raises the usual new-message alert");
     }
     to_chat();
+
+    /* ---- pictures from Ke: bubble, tap for full screen, tap to leave ---- */
+    to_chat();
+    {
+        uint16_t *px = malloc(120 * 80 * 2);
+        for (int i = 0; i < 120 * 80; i++) px[i] = 0x1234;
+        int id = pics_store(px, 120, 80);
+        ui_ke_picture(id);
+        ticks(8);
+        snap();
+        int last = st->msg_count - 1;
+        CHECK(st->msgs[last].who == CHAT_KE && st->msgs[last].pic_id == id, "a picture from Ke is a bubble on his side");
+        int hx = -1, hy = -1;
+        for (int y = 60; y < gfx_height() - 50 && hx < 0; y += 3)
+            for (int x = 4; x < gfx_width() / 2; x += 3)
+                if (ui_hit_test(st, x, y) == UI_HIT_PIC0 + last) { hx = x; hy = y; break; }
+        CHECK(hx >= 0, "the bubble can be tapped (hit id %d)", UI_HIT_PIC0 + last);
+        reset_counts();
+        host_now_us += 400000;
+        press_release(hx, hy, 60);
+        CHECK(n_taps == 1 && taps[0] == UI_HIT_PIC0 + last, "tap on the picture -> the app is asked to show it");
+        /* dragging on a picture scrolls the chat instead */
+        reset_counts();
+        for (int i = 0; i < 12; i++) ui_chat_add(CHAT_HER, "填满聊天记录，好让它能上下滚动。填满聊天记录，好让它能上下滚动。");
+        ticks(8); snap();
+        int hx2 = -1, hy2 = -1;
+        int pl = st->msg_count - 1;
+        (void)pl;
+        ui_set_screen(UI_SCREEN_VIEWER);
+        snap();
+        CHECK(ui_hit_test(st, 5, 5) == UI_HIT_VIEW_EXIT && ui_hit_test(st, 200, 100) == UI_HIT_VIEW_EXIT, "in the viewer every spot is 'back'");
+        reset_counts();
+        host_now_us += 400000;
+        press_release(200, 100, 60);
+        snap();
+        CHECK(st->screen == UI_SCREEN_CHAT && n_taps == 0, "tap in the viewer returns to the chat");
+        (void)hx2; (void)hy2;
+    }
 
     /* ---- bigger touch areas near the bottom ---- */
     {

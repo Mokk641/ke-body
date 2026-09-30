@@ -1,6 +1,7 @@
 #include "ui_render.h"
 #include "ui_colors.h"
 #include "gfx.h"
+#include "pics.h"
 #include "fonts/fonts.h"
 #include <math.h>
 #include <string.h>
@@ -303,7 +304,7 @@ static void draw_face_page(const palette_t *p, const ui_state_t *s, const geo_t 
 
 /* ---- chat page --------------------------------------------------------------------------------- */
 
-typedef struct { int lines; int w, h; gfx_line_t ln[8]; const uint8_t *thumb; int tw, th; } msg_layout_t;
+typedef struct { int lines; int w, h; gfx_line_t ln[8]; const uint8_t *thumb; int tw, th; const pic_t *pic; } msg_layout_t;
 #define THUMB_PAD 12     /* space left and right of the handwriting inside her bubble */
 
 static int bubble_max_w(int W) { return W * 70 / 100; }
@@ -312,8 +313,18 @@ static void measure_msg(const chat_msg_t *m, int W, msg_layout_t *out)
 {
     const kb_font_t *f = &kb_font_text22;
     out->thumb = NULL;
-    if (m->ink_slot) {                                   /* her handwriting: a small picture instead of text */
-        out->thumb = ink_thumb_get(m->ink_slot - 1, &out->tw, &out->th);
+    out->pic = NULL;
+    if (m->pic_id) {                                     /* a picture from Ke: its thumbnail in a bubble */
+        out->pic = pics_get(m->pic_id);
+        if (out->pic) {
+            out->lines = 0;
+            out->w = out->pic->tw + 8;
+            out->h = out->pic->th + 8;
+            return;
+        }
+    }
+    if (m->ink_id) {                                     /* handwriting: a small picture instead of text */
+        out->thumb = ink_thumb_get(m->ink_id, &out->tw, &out->th);
         if (out->thumb) {
             out->lines = 0;
             out->w = out->tw + 2 * THUMB_PAD;
@@ -384,7 +395,8 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
         if (y + ml.h > g->chat_y0 && y < g->chat_clip_y1) {
             bool her = m->who == CHAT_HER;
             int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
-            gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
+            gfx_fill_round_rect(x, y, ml.w, ml.h, ml.pic ? 12 : BUB_R, her ? p->her_bub : p->ke_bub);
+            if (ml.pic) gfx_blit(x + 4, y + 4, ml.pic->thumb, ml.pic->tw, ml.pic->th);
             if (ml.thumb) gfx_blit_mask(x + THUMB_PAD, y + (ml.h - ml.th) / 2, ml.thumb, ml.tw, ml.th, her ? p->her_txt : p->ke_txt);   /* white ink straight on her bubble */
             for (int k = 0; k < ml.lines; k++) {
                 gfx_draw_text_n(f, x + BUB_PADX, y + BUB_PADY + k * lh + f->ascent, ml.ln[k].start, ml.ln[k].len,
@@ -680,6 +692,28 @@ static void ink_layout(int W, int H, ink_geo_t *L)
     L->strip_w = W - 10 - L->strip_x;
 }
 
+/* index of the picture message under (px,py), or -1 */
+static int pic_msg_at(const ui_state_t *s, const geo_t *g, int px, int py)
+{
+    if (py < g->chat_y0 || py >= g->chat_clip_y1) return -1;
+    int y_bottom = g->chat_y1 - 8 + s->scroll;
+    msg_layout_t ml;
+    for (int i = s->msg_count - 1; i >= 0; i--) {
+        const chat_msg_t *m = &s->msgs[i];
+        measure_msg(m, g->W, &ml);
+        int y0 = y_bottom - ml.h;
+        int y = y0 + (i == s->msg_count - 1 ? s->slide_dy : 0);
+        if (py >= y && py < y + ml.h) {
+            if (!ml.pic) return -1;
+            int x = m->who == CHAT_HER ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
+            return (px >= x && px < x + ml.w) ? i : -1;
+        }
+        y_bottom = y0 - (i > 0 ? gap_above(s, i) : 0);
+        if (y_bottom < g->chat_y0 - 400) break;
+    }
+    return -1;
+}
+
 void ui_chat_picture_box(int *w, int *h)
 {
     *w = bubble_max_w(gfx_width()) - 2 * THUMB_PAD;
@@ -880,7 +914,10 @@ void ui_render(const ui_state_t *s)
     gfx_clear_clip();
     gfx_fill(p->bg);
 
-    if (s->screen == UI_SCREEN_INK) {
+    if (s->screen == UI_SCREEN_VIEWER) {
+        draw_frame_fit(s, &g, g.H);
+        if (!s->frame) gfx_draw_text_centered(&kb_font_text22, g.W / 2, g.H / 2, "图片没有了", p->dim);
+    } else if (s->screen == UI_SCREEN_INK) {
         draw_ink_screen(p, s, &g);
     } else if (s->screen == UI_SCREEN_COLORTEST) {
         draw_colortest(s, &g);
@@ -945,6 +982,7 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
     }
 
     if (s->screen == UI_SCREEN_COLORTEST) return UI_HIT_TEST_EXIT;
+    if (s->screen == UI_SCREEN_VIEWER) return UI_HIT_VIEW_EXIT;
 
     if (s->screen == UI_SCREEN_INK) {
         ink_geo_t L;
@@ -987,6 +1025,10 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
             if (in_rect(px, py, x, y, w, ch)) return UI_HIT_EMOJI_BTN0 + idx;
         }
         return UI_HIT_PANEL;
+    }
+    {
+        int pm = pic_msg_at(s, &g, px, py);
+        if (pm >= 0) return UI_HIT_PIC0 + pm;
     }
     return UI_HIT_CHAT;
 }

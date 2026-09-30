@@ -5,6 +5,7 @@
 #include "bridge.h"
 #include "settings.h"
 #include "gfx.h"
+#include "imgdec.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -144,9 +145,9 @@ static void gallery_show(void)
     size_t len = 0;
     if (storage_read(s_names[s_index], &jpeg, &len) != ESP_OK) { ui_set_cam_text("读不出来"); return; }
     int w, h;
-    esp_err_t err = camera_decode_to_fit(jpeg, len, gfx_width(), gfx_height() - 44, &s_shown, &w, &h);
+    bool decoded = imgdec_decode(jpeg, len, gfx_width(), gfx_height() - 44, &s_shown, &w, &h);      /* JPEG or PNG */
     free(jpeg);
-    if (err != ESP_OK) { ui_set_cam_text("解码失败"); return; }
+    if (!decoded) { ui_set_cam_text("不能显示这张（只支持普通 JPEG / PNG）"); return; }
     ui_set_frame(s_shown, w, h);
 }
 
@@ -156,7 +157,9 @@ void camui_gallery_enter(void)
     storage_init();
     if (!s_names) s_names = heap_caps_malloc(STORAGE_MAX_FILES * STORAGE_NAME_LEN, MALLOC_CAP_SPIRAM);
     s_count = s_names ? storage_list(s_names) : 0;
-    s_index = s_count - 1;
+    s_index = s_count - 1;                            /* the newest photo of her own comes first */
+    if (s_names) s_count += storage_list_extra(s_names, s_count, STORAGE_MAX_FILES);      /* then pictures on the card: her own copies, Ke's */
+    if (s_index < 0) s_index = 0;
     s_review = false;
     ui_set_screen(UI_SCREEN_GALLERY);
     gallery_show();
@@ -201,6 +204,7 @@ void camui_gallery_delete(void)
 {
     if (s_count == 0) return;
     bool retake = s_review;
+    if (storage_name_readonly(s_names[s_index])) { ui_toast("SD 卡里自己拷的图只能看，不能删", 2000); return; }
     if (storage_delete(s_names[s_index]) == ESP_OK) {
         memmove(s_names[s_index], s_names[s_index + 1], (size_t)(s_count - s_index - 1) * STORAGE_NAME_LEN);
         s_count--;
@@ -219,6 +223,10 @@ void camui_gallery_send(void)
     uint8_t *jpeg = NULL;
     size_t len = 0;
     if (ui_is_sending()) return;                    /* one photo, one send: no double taps */
+    if (strlen(s_names[s_index]) > 4 && strcasecmp(s_names[s_index] + strlen(s_names[s_index]) - 4, ".png") == 0) {
+        ui_toast("PNG 不能寄（只寄 JPEG 照片）", 2000);
+        return;
+    }
     if (storage_read(s_names[s_index], &jpeg, &len) != ESP_OK) { ui_toast("读不出来", 1500); return; }
     bridge_send_photo(jpeg, len);
     free(jpeg);

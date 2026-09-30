@@ -68,5 +68,5 @@ bool ink_png_from_gray(const uint8_t *gray, int w, int h, uint8_t **out, size_t 
 
 /* Chat thumbnails live in a small pool so chat messages only carry a slot number. */
 #define INK_THUMB_SLOTS 8
-int ink_thumb_store(const uint8_t *mask, int w, int h);              /* returns the slot (oldest one is reused) */
-const uint8_t *ink_thumb_get(int slot, int *w, int *h);              /* NULL if the slot is empty */
+int ink_thumb_store(const uint8_t *mask, int w, int h);              /* returns an id (> 0; 0 = failed); the oldest slot is reused */
+const uint8_t *ink_thumb_get(int id, int *w, int *h);                /* NULL once that thumbnail has been pushed out of the pool */

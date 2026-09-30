@@ -6,6 +6,9 @@
 #include "cam_ui.h"
 #include "png.h"
 #include "ink.h"
+#include "pics.h"
+#include "imgdec.h"
+#include "storage.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -126,9 +129,35 @@ static esp_err_t ink_post(httpd_req_t *req)
     if (!good) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a PNG the board can read (no interlacing; max 8192 px, 6 MB unpacked)");
     int slot = ink_thumb_store(mask, w, h);
     free(mask);
-    if (slot < 0) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    if (slot <= 0) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
     ESP_LOGI(TAG, "ink from Ke: %u bytes -> %dx%d", (unsigned)n, w, h);
     ui_ke_ink(slot);
+    return ok(req);
+}
+
+/* POST /image: a JPEG or PNG from Ke -> thumbnail bubble on his side (tap: full screen); a copy goes to /sdcard/FROMKE */
+static esp_err_t image_post(httpd_req_t *req)
+{
+    uint8_t *buf;
+    size_t n;
+    if (!recv_alloc(req, 3 * 1024 * 1024, &buf, &n)) return ESP_FAIL;
+    int W, H, w, h;
+    ui_screen_size(&W, &H);
+    uint16_t *rgb = NULL;
+    const char *ext = imgdec_ext(buf, n);
+    bool good = imgdec_decode(buf, n, W, H, &rgb, &w, &h);
+    if (!good) {
+        free(buf);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a picture the board can decode (baseline JPEG, or PNG without interlacing)");
+    }
+    storage_init();
+    char name[STORAGE_NAME_LEN];
+    if (ext && storage_save_fromke(buf, n, ext, name, sizeof name) == ESP_OK) ESP_LOGI(TAG, "kept /FROMKE/%s", name);
+    free(buf);
+    int id = pics_store(rgb, w, h);
+    if (id <= 0) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    ESP_LOGI(TAG, "picture from Ke: %dx%d", w, h);
+    ui_ke_picture(id);
     return ok(req);
 }
 
@@ -333,6 +362,7 @@ esp_err_t http_api_start(void)
         { .uri = "/theme",  .method = HTTP_POST, .handler = theme_post },
         { .uri = "/heard",  .method = HTTP_POST, .handler = heard_post },
         { .uri = "/ink",    .method = HTTP_POST, .handler = ink_post },
+        { .uri = "/image",  .method = HTTP_POST, .handler = image_post },
         { .uri = "/buttons", .method = HTTP_POST, .handler = buttons_post },
         { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
         { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },

@@ -16,13 +16,13 @@ echo
 echo "== ui touch =="
 gcc -O1 -Wall -Wno-format-truncation -std=gnu11 -DHOST_TEST \
     -Itools/hoststubs -Imain -I"$IDF/components/json/cJSON" \
-    -o "$OUT/test_ui_touch" tools/test_ui_touch.c "${UI_C:-main/ui.c}" main/ui_render.c main/gfx.c main/ink.c \
+    -o "$OUT/test_ui_touch" tools/test_ui_touch.c "${UI_C:-main/ui.c}" main/ui_render.c main/gfx.c main/ink.c main/pics.c \
     main/fonts/font_*.c "$IDF/components/json/cJSON/cJSON.c" -lm
 "$OUT/test_ui_touch"
 
 echo
 echo "== colours =="
-gcc -O1 -Wall -std=gnu11 -Imain -o "$OUT/test_colors" tools/test_colors.c main/ui_render.c main/gfx.c main/colorcal.c main/ink.c \
+gcc -O1 -Wall -std=gnu11 -Imain -o "$OUT/test_colors" tools/test_colors.c main/ui_render.c main/gfx.c main/colorcal.c main/ink.c main/pics.c \
     main/fonts/font_*.c -lm
 "$OUT/test_colors"
 
@@ -41,3 +41,8 @@ echo "== png decoder =="
 python3 tools/make_test_pngs.py "$OUT/png" >/dev/null
 gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_png" tools/test_png.c main/png.c main/ink.c -lm
 "$OUT/test_png" "$OUT/png"
+
+echo
+echo "== pictures =="
+gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_pics" tools/test_pics.c main/pics.c
+"$OUT/test_pics"

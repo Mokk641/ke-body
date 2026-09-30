@@ -40,3 +40,6 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
 
 # v6.1: the camera driver's own task logs ("NO-SOI") and overflowed its 2 KB stack -> reboot
 CONFIG_CAMERA_TASK_STACK_SIZE=6144
+
+# v8: file names on the SD card are UTF-8 (Chinese song / picture names)
+CONFIG_FATFS_API_ENCODING_UTF_8=y

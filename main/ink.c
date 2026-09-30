@@ -279,26 +279,30 @@ bool ink_make_png(const ink_t *k, uint8_t **png, size_t *len, int *w, int *h)
 
 /* ---- thumbnail pool -------------------------------------------------------------------------------------------- */
 
-typedef struct { uint16_t w, h; uint8_t a[INK_THUMB_MAX_W * INK_THUMB_MAX_H]; } thumb_t;
+typedef struct { uint16_t id, w, h; uint8_t a[INK_THUMB_MAX_W * INK_THUMB_MAX_H]; } thumb_t;
 static thumb_t *s_pool;
 static int s_next_slot;
+static uint16_t s_serial;
 
 int ink_thumb_store(const uint8_t *mask, int w, int h)
 {
     if (!s_pool) s_pool = big_alloc(INK_THUMB_SLOTS * sizeof(thumb_t));
-    if (!s_pool || w <= 0 || h <= 0 || w > INK_THUMB_MAX_W || h > INK_THUMB_MAX_H) return -1;
+    if (!s_pool || w <= 0 || h <= 0 || w > INK_THUMB_MAX_W || h > INK_THUMB_MAX_H) return 0;
     int slot = s_next_slot;
     s_next_slot = (s_next_slot + 1) % INK_THUMB_SLOTS;
+    if (++s_serial == 0) ++s_serial;
+    s_pool[slot].id = s_serial;
     s_pool[slot].w = (uint16_t)w;
     s_pool[slot].h = (uint16_t)h;
     memcpy(s_pool[slot].a, mask, (size_t)w * h);
-    return slot;
+    return s_serial;
 }
 
-const uint8_t *ink_thumb_get(int slot, int *w, int *h)
+const uint8_t *ink_thumb_get(int id, int *w, int *h)
 {
-    if (!s_pool || slot < 0 || slot >= INK_THUMB_SLOTS || s_pool[slot].w == 0) return NULL;
-    *w = s_pool[slot].w;
-    *h = s_pool[slot].h;
-    return s_pool[slot].a;
+    if (!s_pool || id <= 0) return NULL;
+    for (int i = 0; i < INK_THUMB_SLOTS; i++) {
+        if (s_pool[i].id == id) { *w = s_pool[i].w; *h = s_pool[i].h; return s_pool[i].a; }
+    }
+    return NULL;
 }

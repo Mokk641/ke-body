@@ -530,7 +530,7 @@ void ui_chat_add(chat_who_t who, const char *utf8)
     mark_dirty();
 }
 
-static void chat_add_ink(chat_who_t who, int thumb_slot)
+static void chat_add_ink(chat_who_t who, int thumb_id)
 {
     lock();
     if (s_state->msg_count == UI_CHAT_MAX) {
@@ -541,7 +541,7 @@ static void chat_add_ink(chat_who_t who, int thumb_slot)
     memset(m, 0, sizeof *m);
     m->who = who;
     strcpy(m->text, "[手写]");
-    m->ink_slot = thumb_slot >= 0 ? (uint8_t)(thumb_slot + 1) : 0;
+    m->ink_id = thumb_id > 0 ? (uint16_t)thumb_id : 0;
     s_state->scroll = 0;
     s_state->slide_dy = SLIDE_PX;
     s_slide_ms = SLIDE_MS;
@@ -549,7 +549,7 @@ static void chat_add_ink(chat_who_t who, int thumb_slot)
     mark_dirty();
 }
 
-void ui_chat_add_ink(int thumb_slot) { chat_add_ink(CHAT_HER, thumb_slot); }
+void ui_chat_add_ink(int thumb_id) { chat_add_ink(CHAT_HER, thumb_id); }
 
 void app_on_new_message(void);
 
@@ -568,9 +568,44 @@ static void ke_arrived(void)
     app_on_new_message();
 }
 
-void ui_ke_ink(int thumb_slot)
+void ui_ke_picture(int pic_id)
 {
-    chat_add_ink(CHAT_KE, thumb_slot);
+    lock();
+    if (s_state->msg_count == UI_CHAT_MAX) {
+        memmove(&s_state->msgs[0], &s_state->msgs[1], sizeof(chat_msg_t) * (UI_CHAT_MAX - 1));
+        s_state->msg_count--;
+    }
+    chat_msg_t *m = &s_state->msgs[s_state->msg_count++];
+    memset(m, 0, sizeof *m);
+    m->who = CHAT_KE;
+    strcpy(m->text, "[图片]");
+    m->pic_id = pic_id > 0 ? (uint16_t)pic_id : 0;
+    s_state->scroll = 0;
+    s_state->slide_dy = SLIDE_PX;
+    s_slide_ms = SLIDE_MS;
+    unlock();
+    mark_dirty();
+    ke_arrived();
+}
+
+int ui_msg_pic_id(int index)
+{
+    int id = 0;
+    lock();
+    if (index >= 0 && index < s_state->msg_count) id = s_state->msgs[index].pic_id;
+    unlock();
+    return id;
+}
+
+void ui_screen_size(int *w, int *h)
+{
+    *w = gfx_width();
+    *h = gfx_height();
+}
+
+void ui_ke_ink(int thumb_id)
+{
+    chat_add_ink(CHAT_KE, thumb_id);
     ke_arrived();
 }
 
@@ -904,7 +939,7 @@ static void ink_send_now(void)
     int w, h;
     if (!ink_make_png(s_ink, &png, &len, &w, &h)) { ui_toast("生成图片失败", 2000); return; }
     uint8_t *mask = heap_caps_malloc(INK_HAND_W * INK_HAND_H, MALLOC_CAP_SPIRAM);
-    int tw, th, slot = -1;
+    int tw, th, slot = 0;
     if (mask && ink_make_thumb(s_ink, mask, &tw, &th)) slot = ink_thumb_store(mask, tw, th);
     free(mask);
     app_send_ink(png, len);
@@ -918,6 +953,7 @@ static void ink_send_now(void)
 static bool handle_tap_in_ui(int hit)
 {
     switch (hit) {
+    case UI_HIT_VIEW_EXIT: ui_set_screen(UI_SCREEN_CHAT); return true;
     case UI_HIT_INK_OPEN:  ui_ink_open(); return true;
     case UI_HIT_INK_BACK:  ui_set_screen(UI_SCREEN_CHAT); return true;
     case UI_HIT_INK_PAD:   return true;
@@ -943,9 +979,12 @@ static bool handle_tap_in_ui(int hit)
     }
 }
 
+/* the message list: the empty area and the picture bubbles in it */
+static bool in_chat_area(int hit) { return hit == UI_HIT_CHAT || (hit >= UI_HIT_PIC0 && hit < UI_HIT_PIC0 + UI_CHAT_MAX); }
+
 static bool is_pressable(int hit)
 {
-    return hit >= UI_HIT_TEXT_BTN0 || hit == UI_HIT_CAM_BTN || hit == UI_HIT_CAM_GALLERY || hit == UI_HIT_CAM_BACK ||
+    return (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_MUSIC_ROW0) || hit == UI_HIT_CAM_BTN || hit == UI_HIT_CAM_GALLERY || hit == UI_HIT_CAM_BACK ||
            hit == UI_HIT_GAL_DELETE || hit == UI_HIT_GAL_SEND || hit == UI_HIT_HINT || hit == UI_HIT_TOP_BACK ||
            hit == UI_HIT_PLUS || (hit >= UI_HIT_INK_OPEN && hit <= UI_HIT_INK_SEND && hit != UI_HIT_INK_PAD);
 }
@@ -963,7 +1002,7 @@ static void handle_swipe(bool vertical, int total_dx, int total_dy)
         if (scr == UI_SCREEN_FACE && total_dy <= -SWIPE_PX) {
             ui_go_page(UI_SCREEN_CHAT);                          /* swipe up: open the chat */
         } else if (scr == UI_SCREEN_CHAT && total_dy >= SWIPE_PX &&
-                   (s_hit == UI_HIT_TOPBAR || s_hit == UI_HIT_TOP_BACK || (s_hit == UI_HIT_CHAT && !overflow))) {
+                   (s_hit == UI_HIT_TOPBAR || s_hit == UI_HIT_TOP_BACK || (in_chat_area(s_hit) && !overflow))) {
             ui_go_page(UI_SCREEN_FACE);                          /* swipe down from the top bar (or on a short chat) */
         }
     } else if (abs(total_dx) > SWIPE_PX) {
@@ -1071,14 +1110,14 @@ void ui_touch(bool down, int x, int y)
                 mark_dirty();
             }
         }
-        if (s_dragging && s_axis_v && s_hit == UI_HIT_CHAT) {
+        if (s_dragging && s_axis_v && in_chat_area(s_hit)) {
             /* content follows the finger: dragging down reveals older messages */
             ui_scroll_by(y - s_last_y);
         }
         s_last_x = x;
         s_last_y = y;
         /* long press on the face / message area: talk */
-        if (!s_dragging && !s_long_fired && (s_hit == UI_HIT_FACE || s_hit == UI_HIT_CHAT) &&
+        if (!s_dragging && !s_long_fired && (s_hit == UI_HIT_FACE || in_chat_area(s_hit)) &&
             now - s_down_t >= (int64_t)LONG_PRESS_MS * 1000) {
             s_long_fired = true;
             app_on_long_press();
@@ -1117,7 +1156,7 @@ void ui_touch(bool down, int x, int y)
         s_last_tap_hit = target;
         s_last_tap_t = now;
         if (handle_tap_in_ui(target)) { TLOG("up: tap hit=%d handled by the UI", target); return; }
-        bool send_btn = target >= UI_HIT_TEXT_BTN0 || target == UI_HIT_GAL_SEND || target == UI_HIT_GAL_DELETE;
+        bool send_btn = (target >= UI_HIT_TEXT_BTN0 && target < UI_HIT_MUSIC_ROW0) || target == UI_HIT_GAL_SEND || target == UI_HIT_GAL_DELETE;
         if (send_btn && ui_is_sending()) { TLOG("up: ignored (hit=%d, a send is in progress)", target); return; }   /* greyed out: no double taps */
         TLOG("up: tap hit=%d -> app", target);
         app_on_tap(target);

@@ -123,10 +123,11 @@ int main(void)
     int slot = ink_thumb_store(mask, tw, th);
     int gw, gh;
     const uint8_t *g = ink_thumb_get(slot, &gw, &gh);
-    CHECK(slot >= 0 && g && gw == tw && gh == th && !memcmp(g, mask, tw * th), "thumbnail pool round trip");
+    CHECK(slot > 0 && g && gw == tw && gh == th && !memcmp(g, mask, tw * th), "thumbnail pool round trip");
     int first = slot;
     for (int i = 0; i < INK_THUMB_SLOTS; i++) ink_thumb_store(mask, tw, th);
-    CHECK(ink_thumb_get(first, &gw, &gh) != NULL && ink_thumb_get(99, &gw, &gh) == NULL, "pool reuses slots, bad slot is NULL");
+    CHECK(ink_thumb_get(first, &gw, &gh) == NULL, "an old thumbnail that was pushed out is gone (never replaced by a newer picture)");
+    CHECK(ink_thumb_get(0, &gw, &gh) == NULL && ink_thumb_get(-5, &gw, &gh) == NULL, "id 0 / bad ids give NULL");
     free(mask);
     free(k);
     printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
