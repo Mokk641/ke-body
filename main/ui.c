@@ -48,6 +48,7 @@ static const char *const AN_NAME[AN_N] = { "blink", "blush", "zzz", "shake", "fl
 static const bool AN_DEFAULT[AN_N] = { false, true, true, true, false };   /* no random blinking, no border flash */
 
 static SemaphoreHandle_t s_lock;      /* protects s_state and friends */
+static ink_t *s_ink;                  /* handwriting strokes (PSRAM) */
 static SemaphoreHandle_t s_fb_lock;   /* protects framebuffer + gfx dimensions */
 static SemaphoreHandle_t s_dirty;
 static ui_state_t *s_state;           /* what is drawn (PSRAM) */
@@ -387,6 +388,8 @@ void ui_start(void)
     s_fb = heap_caps_malloc(BOARD_LCD_W * BOARD_LCD_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     s_state = heap_caps_calloc(1, sizeof(ui_state_t), MALLOC_CAP_SPIRAM);
     s_snap = heap_caps_calloc(1, sizeof(ui_state_t), MALLOC_CAP_SPIRAM);
+    s_ink = heap_caps_calloc(1, sizeof(ink_t), MALLOC_CAP_SPIRAM);
+    s_state->ink = s_ink;
     assert(s_fb && s_state && s_snap);
     s_state->pressed = UI_HIT_NONE;
     s_state->screen = UI_SCREEN_FACE;
@@ -502,6 +505,25 @@ void ui_chat_add(chat_who_t who, const char *utf8)
     copy_limited(m->text, sizeof m->text, utf8, UI_SAY_MAX_CHARS);
     s_state->scroll = 0;
     s_state->slide_dy = SLIDE_PX;                               /* slides in from below */
+    s_slide_ms = SLIDE_MS;
+    unlock();
+    mark_dirty();
+}
+
+void ui_chat_add_ink(int thumb_slot)
+{
+    lock();
+    if (s_state->msg_count == UI_CHAT_MAX) {
+        memmove(&s_state->msgs[0], &s_state->msgs[1], sizeof(chat_msg_t) * (UI_CHAT_MAX - 1));
+        s_state->msg_count--;
+    }
+    chat_msg_t *m = &s_state->msgs[s_state->msg_count++];
+    memset(m, 0, sizeof *m);
+    m->who = CHAT_HER;
+    strcpy(m->text, "[手写]");
+    m->ink_slot = thumb_slot >= 0 ? (uint8_t)(thumb_slot + 1) : 0;
+    s_state->scroll = 0;
+    s_state->slide_dy = SLIDE_PX;
     s_slide_ms = SLIDE_MS;
     unlock();
     mark_dirty();
@@ -811,9 +833,57 @@ static void set_pressed(int id)
 }
 
 /* Taps that only change the UI itself. Returns false if the app has to handle the tap. */
+/* ---- handwriting ------------------------------------------------------------------------------------- */
+
+static bool s_ink_stroke;          /* a finger is drawing on the pad */
+
+void ui_ink_open(void)
+{
+    ui_set_screen(UI_SCREEN_INK);
+}
+
+static bool ink_norm(int x, int y, int *nx, int *ny)
+{
+    int px, py, side;
+    ui_ink_pad_rect(&px, &py, &side);
+    int ax = (x - px) * INK_RANGE / side, ay = (y - py) * INK_RANGE / side;
+    *nx = ax < 0 ? 0 : (ax > INK_RANGE - 1 ? INK_RANGE - 1 : ax);
+    *ny = ay < 0 ? 0 : (ay > INK_RANGE - 1 ? INK_RANGE - 1 : ay);
+    return true;
+}
+
+static void ink_send_now(void)
+{
+    if (ui_is_sending()) return;
+    if (!ink_finish(s_ink)) { ui_toast("先写几个字，再点「寄」", 1800); return; }
+    uint8_t *png = NULL;
+    size_t len = 0;
+    int w, h;
+    if (!ink_make_png(s_ink, &png, &len, &w, &h)) { ui_toast("生成图片失败", 2000); return; }
+    uint8_t *mask = heap_caps_malloc(INK_THUMB_MAX_W * INK_THUMB_MAX_H, MALLOC_CAP_SPIRAM);
+    int tw, th, slot = -1;
+    if (mask && ink_make_thumb(s_ink, mask, &tw, &th)) slot = ink_thumb_store(mask, tw, th);
+    free(mask);
+    app_send_ink(png, len);
+    free(png);
+    ink_reset(s_ink);
+    ui_chat_add_ink(slot);
+    ui_set_screen(UI_SCREEN_CHAT);
+}
+
 static bool handle_tap_in_ui(int hit)
 {
     switch (hit) {
+    case UI_HIT_INK_OPEN:  ui_ink_open(); return true;
+    case UI_HIT_INK_BACK:  ui_set_screen(UI_SCREEN_CHAT); return true;
+    case UI_HIT_INK_PAD:   return true;
+    case UI_HIT_INK_NEXT:
+        if (!ink_next(s_ink) && !ink_is_empty(&s_ink->cur)) ui_toast("最多写 16 个字", 1500);
+        mark_dirty();
+        return true;
+    case UI_HIT_INK_UNDO:  ink_undo(s_ink); mark_dirty(); return true;
+    case UI_HIT_INK_CLEAR: ink_clear(s_ink); mark_dirty(); return true;
+    case UI_HIT_INK_SEND:  ink_send_now(); return true;
     case UI_HIT_HINT:     ui_go_page(UI_SCREEN_CHAT); return true;
     case UI_HIT_TEST_EXIT: ui_set_screen(UI_SCREEN_FACE); return true;
     case UI_HIT_TOP_BACK: ui_go_page(UI_SCREEN_FACE); return true;
@@ -831,7 +901,7 @@ static bool is_pressable(int hit)
 {
     return hit >= UI_HIT_TEXT_BTN0 || hit == UI_HIT_CAM_BTN || hit == UI_HIT_CAM_GALLERY || hit == UI_HIT_CAM_BACK ||
            hit == UI_HIT_GAL_DELETE || hit == UI_HIT_GAL_SEND || hit == UI_HIT_HINT || hit == UI_HIT_TOP_BACK ||
-           hit == UI_HIT_PLUS;
+           hit == UI_HIT_PLUS || (hit >= UI_HIT_INK_OPEN && hit <= UI_HIT_INK_SEND && hit != UI_HIT_INK_PAD);
 }
 
 static void handle_swipe(bool vertical, int total_dx, int total_dy)
@@ -872,6 +942,27 @@ void ui_touch(bool down, int x, int y)
         unlock();
         if (is_pressable(s_hit)) set_pressed(s_hit);
         app_on_touch_activity();
+        if (s_hit == UI_HIT_INK_PAD && s_ink) {                    /* start of a stroke */
+            int nx, ny;
+            ink_norm(x, y, &nx, &ny);
+            s_ink_stroke = ink_pen_down(s_ink, nx, ny);
+            mark_dirty();
+        }
+        return;
+    }
+    if (down && s_down && s_ink_stroke) {                          /* the pen follows the finger */
+        int nx, ny;
+        ink_norm(x, y, &nx, &ny);
+        s_last_x = x;
+        s_last_y = y;
+        if (ink_pen_move(s_ink, nx, ny)) mark_dirty();
+        return;
+    }
+    if (!down && s_down && s_ink_stroke) {
+        s_down = false;
+        s_ink_stroke = false;
+        ink_pen_up(s_ink);
+        mark_dirty();
         return;
     }
     if (down && s_down) {

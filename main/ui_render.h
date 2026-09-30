@@ -10,6 +10,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "ink.h"
 
 #define UI_FACE_MAX_CHARS 20   /* code points accepted by POST /face */
 #define UI_SAY_MAX_CHARS  60   /* code points accepted by POST /say  */
@@ -33,9 +34,10 @@ typedef struct {
     uint8_t who;              /* chat_who_t */
     char face[UI_FACE_BUF];   /* CHAT_KE: the expression when this was sent (the avatar) */
     char text[UI_SAY_BUF];
+    uint8_t ink_slot;         /* 0 = a text message; n = handwriting, thumbnail in ink pool slot n-1 */
 } chat_msg_t;
 
-typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST } ui_screen_t;
+typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK } ui_screen_t;
 
 typedef struct { char text[UI_BTN_TEXT_LEN]; } ui_button_t;
 
@@ -76,6 +78,7 @@ typedef struct {
     /* camera / gallery screens */
     const uint16_t *frame;    /* byte-swapped RGB565 image to show (preview or photo), or NULL */
     int frame_w, frame_h;
+    const ink_t *ink;         /* handwriting page: the strokes (owned by ui.c, read by the renderer) */
     bool review;              /* gallery screen shows the photo just taken (retake / send / keep) */
     bool sending;             /* a message/photo is on its way: buttons greyed, taps ignored */
     char cam_text[64];        /* status line on the camera/gallery screen */
@@ -98,6 +101,13 @@ enum {
     UI_HIT_TOP_BACK,       /* chat page top bar: the down chevron */
     UI_HIT_TOPBAR,         /* chat page top bar: the rest (drag down = back to the face page) */
     UI_HIT_PLUS,           /* chat page bottom bar: + */
+    UI_HIT_INK_OPEN,       /* the 手写 capsule in the + panel */
+    UI_HIT_INK_BACK,       /* handwriting page: back to the chat */
+    UI_HIT_INK_PAD,        /* handwriting page: the square you write in */
+    UI_HIT_INK_NEXT,       /* 下一个 */
+    UI_HIT_INK_UNDO,       /* 撤销一笔 */
+    UI_HIT_INK_CLEAR,      /* 清空 */
+    UI_HIT_INK_SEND,       /* 寄 */
     UI_HIT_TEST_EXIT,      /* colour test pattern: tap anywhere to leave */
     UI_HIT_PANEL,          /* open panel: empty part (also the panel while it is still sliding) */
     UI_HIT_TEXT_BTN0 = 100,   /* + index into text_btn */
@@ -117,6 +127,9 @@ int ui_chat_area_height(const ui_state_t *s);
 /* Emoji grid paging for the current orientation. */
 int ui_emoji_per_page(void);
 int ui_emoji_pages(const ui_state_t *s);
+
+/* The handwriting square in the current orientation (screen pixels): left, top, side. */
+void ui_ink_pad_rect(int *x, int *y, int *side);
 
 /* Latest sentence from Ke (shown under the face); "" if none. */
 const char *ui_latest_ke_text(const ui_state_t *s);

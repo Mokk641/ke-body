@@ -16,7 +16,8 @@ void ui_override_face(const char *utf8);    /* recording / playing; NULL restore
 void ui_override_corner(const char *utf8);
 
 /* chat */
-void ui_chat_add(chat_who_t who, const char *utf8);   /* appends (Ke's carry the current face as avatar), scrolls to bottom */
+void ui_chat_add(chat_who_t who, const char *utf8);
+void ui_chat_add_ink(int thumb_slot);   /* her handwriting: a small picture bubble on her side */   /* appends (Ke's carry the current face as avatar), scrolls to bottom */
 void ui_set_say(const char *utf8);     /* Ke's message: chat + face-page line + "(—o—)" notice; "" is ignored */
 void ui_toast(const char *utf8, int ms);
 void ui_scroll_by(int dy);
@@ -67,6 +68,9 @@ void ui_display_hold(bool hold);       /* stop / resume LCD refresh (while the c
 void ui_set_frame(const uint16_t *frame, int w, int h);   /* image shown on camera/gallery screen */
 void ui_set_cam_text(const char *utf8);
 void ui_set_gallery_pos(int index, int count);
+
+/* handwriting page (the strokes are kept while you go back to the chat) */
+void ui_ink_open(void);
 
 /* touch dispatch (from the touch task): x,y in current rotation frame.
  * x,y are ignored when down == false; the last position seen while down is used. */

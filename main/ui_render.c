@@ -73,13 +73,17 @@ int ui_emoji_pages(const ui_state_t *s)
     return s->emoji_btn_n <= 0 ? 0 : (s->emoji_btn_n + pp - 1) / pp;
 }
 
+/* The capsules in the panel: the configured phrases, then a fixed 手写 (handwriting) one. */
+static int phrase_count(const ui_state_t *s) { return s->text_btn_n + 1; }
+static const char *phrase_label(const ui_state_t *s, int i) { return i < s->text_btn_n ? s->text_btn[i].text : "手写"; }
+
 /* Where quick-phrase capsule idx sits: x, row (0/1), width. false if it does not fit in two rows. */
 static bool phrase_pos(const ui_state_t *s, int W, int idx, int *x, int *row, int *w)
 {
     const kb_font_t *f = &kb_font_text22;
     int cx = MARGIN, r = 0;
-    for (int i = 0; i <= idx && i < s->text_btn_n; i++) {
-        int cw = gfx_text_width(f, s->text_btn[i].text) + 28;
+    for (int i = 0; i <= idx && i < phrase_count(s); i++) {
+        int cw = gfx_text_width(f, phrase_label(s, i)) + 28;
         if (cw < 56) cw = 56;
         if (cw > W - 2 * MARGIN) cw = W - 2 * MARGIN;
         if (cx > MARGIN && cx + cw > W - MARGIN) { r++; cx = MARGIN; }
@@ -100,7 +104,7 @@ static void calc_geo(const ui_state_t *s, geo_t *g)
     g->bar_y = g->H - g->bot_h;
 
     int rows = 0;
-    for (int i = 0; i < s->text_btn_n; i++) {
+    for (int i = 0; i < phrase_count(s); i++) {
         int x, r, w;
         if (phrase_pos(s, g->W, i, &x, &r, &w) && r + 1 > rows) rows = r + 1;
     }
@@ -299,13 +303,25 @@ static void draw_face_page(const palette_t *p, const ui_state_t *s, const geo_t 
 
 /* ---- chat page --------------------------------------------------------------------------------- */
 
-typedef struct { int lines; int w, h; gfx_line_t ln[8]; } msg_layout_t;
+typedef struct { int lines; int w, h; gfx_line_t ln[8]; const uint8_t *thumb; int tw, th; } msg_layout_t;
+#define THUMB_PAD 10
 
 static int bubble_max_w(int W) { return W * 70 / 100; }
 
 static void measure_msg(const chat_msg_t *m, int W, msg_layout_t *out)
 {
     const kb_font_t *f = &kb_font_text22;
+    out->thumb = NULL;
+    if (m->ink_slot) {                                   /* her handwriting: a small picture instead of text */
+        out->thumb = ink_thumb_get(m->ink_slot - 1, &out->tw, &out->th);
+        if (out->thumb) {
+            out->lines = 0;
+            out->w = out->tw + 2 * THUMB_PAD;
+            out->h = out->th + 2 * BUB_PADY;
+            if (out->h < 2 * BUB_R) out->h = 2 * BUB_R;
+            return;
+        }
+    }
     out->lines = gfx_wrap(f, m->text, bubble_max_w(W) - 2 * BUB_PADX, out->ln, 8);
     int w = 0;
     for (int i = 0; i < out->lines; i++) {
@@ -369,6 +385,7 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
             bool her = m->who == CHAT_HER;
             int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
             gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
+            if (ml.thumb) gfx_blit_mask(x + THUMB_PAD, y + (ml.h - ml.th) / 2, ml.thumb, ml.tw, ml.th, p->her_txt);
             for (int k = 0; k < ml.lines; k++) {
                 gfx_draw_text_n(f, x + BUB_PADX, y + BUB_PADY + k * lh + f->ascent, ml.ln[k].start, ml.ln[k].len,
                                 her ? p->her_txt : p->ke_txt);
@@ -492,14 +509,18 @@ static void draw_panel(const palette_t *p, const ui_state_t *s, const geo_t *g)
 
     /* quick phrases: rounded capsules */
     const kb_font_t *tf = &kb_font_text22;
-    for (int i = 0; i < s->text_btn_n; i++) {
+    for (int i = 0; i < phrase_count(s); i++) {
         int x, row, w;
         if (!phrase_pos(s, g->W, i, &x, &row, &w)) continue;
         int y = py + 8 + row * (CAP_H + CAP_GAP);
-        gfx_fill_round_rect(x, y, w, CAP_H, CAP_H / 2, s->pressed == UI_HIT_TEXT_BTN0 + i && !s->sending ? p->pressed : p->cap);
-        int inner = w - 16, len = gfx_fit_len(tf, s->text_btn[i].text, inner);
-        int tw = gfx_text_width_n(tf, s->text_btn[i].text, len);
-        gfx_draw_text_n(tf, x + (w - tw) / 2, y + (CAP_H - tf->line_height) / 2 + tf->ascent, s->text_btn[i].text, len, s->sending ? p->disabled_txt : p->cap_txt);
+        const bool ink_cap = i == s->text_btn_n;                     /* handwriting is not a send button: never greyed */
+        const bool dis = s->sending && !ink_cap;
+        const int hit = ink_cap ? UI_HIT_INK_OPEN : UI_HIT_TEXT_BTN0 + i;
+        gfx_fill_round_rect(x, y, w, CAP_H, CAP_H / 2, s->pressed == hit && !dis ? p->pressed : p->cap);
+        const char *label = phrase_label(s, i);
+        int inner = w - 16, len = gfx_fit_len(tf, label, inner);
+        int tw = gfx_text_width_n(tf, label, len);
+        gfx_draw_text_n(tf, x + (w - tw) / 2, y + (CAP_H - tf->line_height) / 2 + tf->ascent, label, len, dis ? p->disabled_txt : p->cap_txt);
     }
 
     /* emoji grid, one page at a time */
@@ -610,6 +631,119 @@ static void draw_gallery_screen(const palette_t *p, const ui_state_t *s, const g
     btn_rect3(g, 2, &x, &y, &w); draw_button(p, x, y, w, s->review ? "保留" : "返回", s->pressed == UI_HIT_CAM_BACK, false);
 }
 
+/* ---- handwriting page ------------------------------------------------------------------------------------- */
+
+/* button order: 0 下一个, 1 撤销一笔, 2 清空, 3 寄 */
+typedef struct {
+    int back_x, back_y, back_w, back_h;
+    int strip_x, strip_y, strip_w, strip_h;
+    int pad_x, pad_y, pad;
+    int bx[4], by[4], bw, bh;
+} ink_geo_t;
+
+static void ink_layout(int W, int H, ink_geo_t *L)
+{
+    if (W < H) {                                          /* portrait: strip on top, square, 2x2 buttons below */
+        L->strip_y = 8; L->strip_h = 48;
+        L->pad = W - 20; L->pad_x = 10; L->pad_y = 64;
+        L->bw = (W - 20 - 8) / 2; L->bh = 40;
+        int y0 = L->pad_y + L->pad + 10;
+        L->bx[1] = 10;               L->by[1] = y0;                 /* 撤销一笔 | 清空 */
+        L->bx[2] = 10 + L->bw + 8;   L->by[2] = y0;
+        L->bx[0] = 10;               L->by[0] = y0 + L->bh + 8;     /* 下一个 | 寄 */
+        L->bx[3] = 10 + L->bw + 8;   L->by[3] = y0 + L->bh + 8;
+    } else {                                              /* landscape: square on the left, buttons stacked on the right */
+        L->strip_y = 6; L->strip_h = 40;
+        L->pad_y = L->strip_y + L->strip_h + 6;
+        L->pad = H - L->pad_y - 8; L->pad_x = 10;
+        L->bw = W - 10 - (L->pad_x + L->pad + 12); L->bh = 46;
+        for (int i = 0; i < 4; i++) { L->bx[i] = L->pad_x + L->pad + 12; L->by[i] = L->pad_y + i * (L->bh + 8); }
+    }
+    L->back_x = 6; L->back_y = L->strip_y; L->back_w = 44; L->back_h = L->strip_h;
+    L->strip_x = L->back_x + L->back_w + 4;
+    L->strip_w = W - 10 - L->strip_x;
+}
+
+void ui_ink_pad_rect(int *x, int *y, int *side)
+{
+    ink_geo_t L;
+    ink_layout(gfx_width(), gfx_height(), &L);
+    *x = L.pad_x; *y = L.pad_y; *side = L.pad;
+}
+
+typedef struct { float w; uint16_t color; } ink_pen_t;
+static void ink_draw_seg(void *ctx, float x0, float y0, float x1, float y1)
+{
+    const ink_pen_t *pen = ctx;
+    gfx_line(x0, y0, x1, y1, pen->w, pen->color);
+}
+
+static void ink_draw_char(const ink_char_t *c, float ox, float oy, float scale, float width, uint16_t color)
+{
+    ink_pen_t pen = { width, color };
+    int n = c->nstrokes;
+    for (int k = 0; k < n; k++) ink_flatten(c, k, ox, oy, scale, ink_draw_seg, &pen);
+}
+
+static void draw_ink_button(const palette_t *p, int x, int y, int w, int h, const char *label, bool pressed, bool disabled, bool primary)
+{
+    const kb_font_t *f = &kb_font_text22;
+    uint16_t fill = primary ? p->her_bub : p->cap;
+    if (pressed && !disabled) fill = primary ? gfx_mix(p->her_bub, p->face, 60) : p->pressed;
+    if (primary && disabled) fill = p->cap;
+    gfx_fill_round_rect(x, y, w, h, h / 2, fill);
+    int tw = gfx_text_width(f, label);
+    uint16_t tc = disabled ? p->disabled_txt : (primary ? p->her_txt : p->cap_txt);
+    gfx_draw_text(f, x + (w - tw) / 2, y + (h - f->line_height) / 2 + f->ascent, label, tc);
+}
+
+static void draw_ink_screen(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    ink_geo_t L;
+    ink_layout(g->W, g->H, &L);
+    const ink_t *ink = s->ink;
+
+    /* back chevron and the strip of characters written so far */
+    uint16_t bc = s->pressed == UI_HIT_INK_BACK ? p->icon_pressed : p->icon;
+    float bcx = (float)(L.back_x + L.back_w / 2), bcy = (float)(L.back_y + L.back_h / 2);
+    gfx_line(bcx + 4.f, bcy - 8.f, bcx - 4.f, bcy, 2.f, bc);
+    gfx_line(bcx - 4.f, bcy, bcx + 4.f, bcy + 8.f, 2.f, bc);
+    gfx_fill_round_rect(L.strip_x, L.strip_y, L.strip_w, L.strip_h, 12, p->cell);
+    const int n = ink ? ink->ndone : 0;
+    if (n == 0) {
+        const kb_font_t *hf = &kb_font_small14;
+        gfx_draw_text_centered(hf, L.strip_x + L.strip_w / 2, L.strip_y + L.strip_h / 2 + 5, "写好一个字，点「下一个」", p->dim);
+    } else {
+        int cell = L.strip_h - 6;
+        int cap = (L.strip_w - 12) / cell;
+        if (cap < 1) cap = 1;
+        int first = n > cap ? n - cap : 0;
+        for (int i = first; i < n; i++) {
+            float ox = (float)(L.strip_x + 6 + (i - first) * cell) + 3.f, oy = (float)L.strip_y + 6.f;
+            ink_draw_char(&ink->done[i], ox, oy, (float)(cell - 6) / (float)INK_RANGE, 2.2f, p->face);
+        }
+        if (first > 0) gfx_fill_circle(L.strip_x + 5, L.strip_y + L.strip_h / 2, 2, p->dim);      /* more to the left */
+    }
+
+    /* the square: faint guide lines, then the current character */
+    gfx_fill_round_rect(L.pad_x, L.pad_y, L.pad, L.pad, 14, p->cell);
+    uint16_t guide = gfx_mix(p->cell, p->icon, 60);
+    for (int d = 10; d < L.pad - 10; d += 12) {
+        gfx_fill_rect(L.pad_x + L.pad / 2, L.pad_y + d, 1, 6, guide);
+        gfx_fill_rect(L.pad_x + d, L.pad_y + L.pad / 2, 6, 1, guide);
+    }
+    if (ink) {
+        float w = (float)L.pad * 0.028f;
+        if (w < 4.f) w = 4.f;
+        ink_draw_char(&ink->cur, (float)L.pad_x, (float)L.pad_y, (float)L.pad / (float)INK_RANGE, w, p->face);
+    }
+
+    draw_ink_button(p, L.bx[0], L.by[0], L.bw, L.bh, "下一个", s->pressed == UI_HIT_INK_NEXT, false, false);
+    draw_ink_button(p, L.bx[1], L.by[1], L.bw, L.bh, "撤销一笔", s->pressed == UI_HIT_INK_UNDO, false, false);
+    draw_ink_button(p, L.bx[2], L.by[2], L.bw, L.bh, "清空", s->pressed == UI_HIT_INK_CLEAR, false, false);
+    draw_ink_button(p, L.bx[3], L.by[3], L.bw, L.bh, "寄", s->pressed == UI_HIT_INK_SEND, s->sending, true);
+}
+
 /* ---- colour test pattern: swatches with their #RRGGBB, to compare with a phone ----------------------------- */
 
 static void draw_colortest(const ui_state_t *s, const geo_t *g)
@@ -670,7 +804,9 @@ void ui_render(const ui_state_t *s)
     gfx_clear_clip();
     gfx_fill(p->bg);
 
-    if (s->screen == UI_SCREEN_COLORTEST) {
+    if (s->screen == UI_SCREEN_INK) {
+        draw_ink_screen(p, s, &g);
+    } else if (s->screen == UI_SCREEN_COLORTEST) {
         draw_colortest(s, &g);
     } else if (s->screen == UI_SCREEN_CAMERA) {
         draw_camera_screen(p, s, &g);
@@ -726,6 +862,16 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
 
     if (s->screen == UI_SCREEN_COLORTEST) return UI_HIT_TEST_EXIT;
 
+    if (s->screen == UI_SCREEN_INK) {
+        ink_geo_t L;
+        ink_layout(g.W, g.H, &L);
+        if (in_rect(px, py, L.back_x, L.back_y, L.back_w, L.back_h)) return UI_HIT_INK_BACK;
+        static const int ids[4] = { UI_HIT_INK_NEXT, UI_HIT_INK_UNDO, UI_HIT_INK_CLEAR, UI_HIT_INK_SEND };
+        for (int i = 0; i < 4; i++) if (in_rect(px, py, L.bx[i], L.by[i], L.bw, L.bh)) return ids[i];
+        if (in_rect(px, py, L.pad_x, L.pad_y, L.pad, L.pad)) return UI_HIT_INK_PAD;
+        return UI_HIT_NONE;
+    }
+
     if (s->screen == UI_SCREEN_FACE) {
         if (py >= g.H - 44 && px >= g.W / 2 - 110 && px < g.W / 2 + 110) return UI_HIT_HINT;
         return UI_HIT_FACE;
@@ -740,11 +886,11 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
     }
     if (s->panel_open && py >= g.panel_y) {
         if (s->panel_pos < 255) return UI_HIT_PANEL;                 /* still sliding: no button presses */
-        for (int i = 0; i < s->text_btn_n; i++) {
+        for (int i = 0; i < phrase_count(s); i++) {
             int cx, row, cw;
             if (!phrase_pos(s, g.W, i, &cx, &row, &cw)) continue;
             int cyy = g.bar_y - g.panel_h + 8 + row * (CAP_H + CAP_GAP);
-            if (in_rect(px, py, cx, cyy, cw, CAP_H)) return UI_HIT_TEXT_BTN0 + i;
+            if (in_rect(px, py, cx, cyy, cw, CAP_H)) return i == s->text_btn_n ? UI_HIT_INK_OPEN : UI_HIT_TEXT_BTN0 + i;
         }
         int page = s->emoji_page < g.pages ? s->emoji_page : (g.pages > 0 ? g.pages - 1 : 0);
         for (int local = 0; local < g.per_page; local++) {

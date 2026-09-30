@@ -19,6 +19,9 @@ const char *storage_dir(void);         /* ".../DCIM" or NULL if nothing is mount
  * ESP_ERR_NO_MEM when the flash fallback is full. */
 esp_err_t storage_save_jpeg(const uint8_t *jpeg, size_t len, char *name, size_t name_len);
 
+/* Save under an explicit file name (used by `cam sweep`). Same flash limit as above. */
+esp_err_t storage_save_named(const char *name, const uint8_t *data, size_t len);
+
 /* Directory listing (sorted by name). Returns count; names is STORAGE_MAX_FILES x STORAGE_NAME_LEN. */
 int storage_list(char (*names)[STORAGE_NAME_LEN]);
 esp_err_t storage_read(const char *name, uint8_t **data, size_t *len);   /* malloc'd (PSRAM) */

@@ -201,6 +201,21 @@ void gfx_line(float x0, float y0, float x1, float y1, float width, uint16_t colo
     }
 }
 
+void gfx_blit_mask(int x, int y, const uint8_t *mask, int w, int h, uint16_t color)
+{
+    x += s_ox; y += s_oy;
+    for (int yy = 0; yy < h; yy++) {
+        int dy = y + yy;
+        if (dy < s_cy0 || dy >= s_cy1) continue;
+        for (int xx = 0; xx < w; xx++) {
+            int dx = x + xx;
+            if (dx < s_cx0 || dx >= s_cx1) continue;
+            uint8_t a = mask[yy * w + xx];
+            if (a) blend8(dx - s_ox, dy - s_oy, color, a);
+        }
+    }
+}
+
 void gfx_blit(int x, int y, const uint16_t *src, int src_w, int src_h)
 {
     x += s_ox; y += s_oy;

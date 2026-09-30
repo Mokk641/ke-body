@@ -296,7 +296,9 @@ static int cmd_cam(int argc, char **argv)
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "status") == 0) { camera_print_settings(); return 0; }
+    if (argc == 2 && strcmp(argv[1], "sweep") == 0) { camui_sweep(); return 0; }
     printf("usage: cam on|off|shot|gallery|status\n"
+           "       cam sweep             (photos + NO-SOI table for xclk 6/8/10 x quality 10/20)\n"
            "       cam xclk <6-24 MHz>   (default 10; lower = fewer stripes, slower)\n"
            "       cam quality <4-63>    (JPEG, lower = better, default 10)\n"
            "       cam awb on|off | cam wb auto|sunny|cloudy|office|home\n"

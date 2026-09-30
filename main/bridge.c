@@ -22,7 +22,7 @@
 
 static const char *TAG = "bridge";
 
-typedef struct { int type; uint8_t *data; size_t len; } job_t;   /* type 0 = text, 1 = photo */
+typedef struct { int type; uint8_t *data; size_t len; } job_t;   /* type 0 = text, 1 = photo, 2 = handwriting PNG */
 static QueueHandle_t s_q;
 static volatile int s_pending;   /* jobs queued or being sent: the buttons are greyed while > 0 */
 
@@ -146,7 +146,7 @@ static void worker(void *arg)
     for (;;) {
         if (xQueueReceive(s_q, &j, portMAX_DELAY) != pdTRUE) continue;
         char url[200];
-        const char *path = j.type == 1 ? "photo" : "msg";
+        const char *path = j.type == 2 ? "ink" : j.type == 1 ? "photo" : "msg";
         if (!bridge_url(path, url, sizeof url)) {
             ui_toast("还没设置电脑地址\n串口输入: server http://电脑IP:8770/hear", 4000);
         } else if (wifi_mgr_state() != WIFI_MGR_CONNECTED) {
@@ -157,11 +157,11 @@ static void worker(void *arg)
                 if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(backoff_ms[attempt - 1]));
                 arp_wake(url);
                 int status = 0;
-                esp_err_t err = bridge_post(url, j.type == 1 ? "image/jpeg" : "text/plain; charset=utf-8",
+                esp_err_t err = bridge_post(url, j.type == 2 ? "image/png" : j.type == 1 ? "image/jpeg" : "text/plain; charset=utf-8",
                                             j.data, j.len, &status, NULL, NULL, 0);
                 if (err == ESP_OK && status / 100 == 2) {
                     done = true;
-                    if (j.type == 1) ui_toast("寄出去了", 1500);
+                    if (j.type >= 1) ui_toast("寄出去了", 1500);
                     continue;
                 }
                 char detail[40];
@@ -232,6 +232,11 @@ static void probe_task(void *arg)
         if (first || ok != last) { ui_set_online(ok); last = ok; first = false; }
         vTaskDelay(pdMS_TO_TICKS(15000));
     }
+}
+
+void bridge_send_ink(const uint8_t *png, size_t len)
+{
+    enqueue(2, png, len);
 }
 
 void bridge_start(void)

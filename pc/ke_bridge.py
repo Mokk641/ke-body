@@ -11,6 +11,9 @@ http://<pc-ip>:8770/hear -> /msg, /photo live next to it):
     POST /hear   WAV recording (push-to-talk)  -> inbox/YYYYMMDD-HHMMSS.wav
     POST /msg    UTF-8 text (quick button, shake) -> inbox/YYYYMMDD-HHMMSS.txt
     POST /photo  JPEG she chose to send        -> inbox/photos/YYYYMMDD-HHMMSS.jpg
+    POST /ink    PNG of a handwritten sentence  -> inbox/ink/YYYYMMDD-HHMMSS.png
+                 (black strokes on white, 96 px high, one cell per character; the board does no recognition -
+                 read it with whatever you like, e.g. hand the PNG to a vision model)
 
 Every file name is printed on one line. Speech-to-text / replies are NOT done
 here; hook the inbox folder up to whatever you like. Standard library only.
@@ -87,8 +90,19 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(data)
             print(f"{out}  ({len(data)} bytes from {who})", flush=True)
             self._reply(200, "ok\n")
+        elif path == "/ink":
+            if len(data) < 33 or data[:8] != b"\x89PNG\r\n\x1a\n":
+                self._reply(400, "not a png\n")
+                return
+            folder = os.path.join(self.inbox, "ink")
+            os.makedirs(folder, exist_ok=True)
+            out = unique_path(folder, stamp, ".png")
+            with open(out, "wb") as f:
+                f.write(data)
+            print(f"{out}  ({len(data)} bytes from {who})", flush=True)
+            self._reply(200, "ok\n")
         else:
-            self._reply(404, "unknown path (POST /hear, /msg, /photo)\n")
+            self._reply(404, "unknown path (POST /hear, /msg, /photo, /ink)\n")
 
     def log_message(self, fmt, *args):   # keep the console to one line per file
         pass

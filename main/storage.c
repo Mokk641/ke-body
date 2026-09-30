@@ -148,6 +148,25 @@ esp_err_t storage_save_jpeg(const uint8_t *jpeg, size_t len, char *name, size_t 
     return ESP_OK;
 }
 
+esp_err_t storage_save_named(const char *name, const uint8_t *data, size_t len)
+{
+    if (!s_dir[0]) return ESP_ERR_INVALID_STATE;
+    if (!s_is_sd) {
+        char (*names)[STORAGE_NAME_LEN] = heap_caps_malloc(STORAGE_MAX_FILES * STORAGE_NAME_LEN, MALLOC_CAP_SPIRAM);
+        int n = names ? storage_list(names) : 0;
+        free(names);
+        if (n >= STORAGE_FLASH_MAX) return ESP_ERR_NO_MEM;
+    }
+    char path[80];
+    snprintf(path, sizeof path, "%s/%s", s_dir, name);
+    FILE *f = fopen(path, "wb");
+    if (!f) return ESP_FAIL;
+    size_t w = fwrite(data, 1, len, f);
+    fclose(f);
+    if (w != len) { unlink(path); return ESP_FAIL; }
+    return ESP_OK;
+}
+
 esp_err_t storage_read(const char *name, uint8_t **data, size_t *len)
 {
     if (!s_dir[0]) return ESP_ERR_INVALID_STATE;

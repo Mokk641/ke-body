@@ -18,6 +18,7 @@ idf_component_register(
         "bridge.c"
         "imu.c"
         "camera.c"
+        "ink.c"
         "imgrot.c"
         "storage.c"
         "cam_ui.c"

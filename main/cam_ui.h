@@ -21,4 +21,5 @@ bool camui_peek(void);
 void camui_set_peek(bool on);
 esp_err_t camui_remote_snap(uint8_t **jpeg, size_t *len);   /* ESP_ERR_NOT_ALLOWED when peek is off */
 
+void camui_sweep(void);                /* console `cam sweep`: photos + frame-loss table for several XCLK / quality settings */
 void camui_print_photos(void);         /* console: list files */

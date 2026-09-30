@@ -27,6 +27,12 @@ void camera_set_awb(bool on);
 bool camera_set_wb(const char *name);    /* auto sunny cloudy office home */
 bool camera_set_rot(int deg);            /* extra clockwise correction 0/90/180/270 */
 void camera_print_settings(void);
+int camera_get_xclk(void);
+int camera_get_quality(void);
+
+/* Grab `frames` photo-size frames and report how many arrived intact and how many the driver dropped. */
+typedef struct { int good, bad, timeouts, no_soi, no_eoi, ms_per_frame; size_t avg_bytes; } camera_probe_t;
+esp_err_t camera_probe_frames(int frames, camera_probe_t *out);
 
 /* Orientation tweaks (saved to NVS). */
 void camera_set_vflip(bool on);

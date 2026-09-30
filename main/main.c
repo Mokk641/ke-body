@@ -219,6 +219,11 @@ void app_on_touch_activity(void)
     }
 }
 
+void app_send_ink(const uint8_t *png, size_t len)
+{
+    bridge_send_ink(png, len);
+}
+
 static void touch_task(void *arg)
 {
     bool was_down = false;
@@ -229,13 +234,13 @@ static void touch_task(void *arg)
         bool down = board_touch_read(&x, &y);
         if (down) {
             lx = x; ly = y; miss = 0; was_down = true;
-        } else if (was_down && ++miss < 2) {
+        } else if (was_down && ++miss < (ui_get_screen() == UI_SCREEN_INK ? 4 : 2)) {
             down = true;       /* the FT6336 sometimes reports "no touch" for one scan mid-press: don't release yet */
         } else {
             was_down = false; miss = 0;
         }
         ui_touch(down, lx, ly);
-        vTaskDelay(pdMS_TO_TICKS(30));
+        vTaskDelay(pdMS_TO_TICKS(ui_get_screen() == UI_SCREEN_INK ? 8 : 30));   /* faster while writing: smoother strokes */
     }
 }
 

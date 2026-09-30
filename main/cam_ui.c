@@ -225,6 +225,45 @@ void camui_gallery_send(void)
     ui_toast("寄给克...", 1500);
 }
 
+/* `cam sweep`: photos and frame-loss numbers for several XCLK / JPEG-quality settings, one after the other, so the
+ * stripes can be compared on one screen of the PC. Keep the board still, pointed at something bright. */
+void camui_sweep(void)
+{
+    if (storage_init() != ESP_OK || !storage_dir()) { printf("sweep: no storage for the photos\n"); return; }
+    if (ui_get_screen() == UI_SCREEN_CAMERA) { printf("sweep: leave the camera screen first (cam off)\n"); return; }
+    int old_x = camera_get_xclk(), old_q = camera_get_quality();
+    static const int xs[] = { 6, 8, 10 }, qs[] = { 10, 20 };
+    printf("sweep: %s files sweep-x<MHz>-q<quality>.jpg in DCIM\n", storage_is_sd() ? "SD card" : "flash (max 12 photos: delete some first)");
+    printf("  xclk quality | good bad timeout | NO-SOI NO-EOI | ms/frame | KB/frame\n");
+    xSemaphoreTake(s_cam_lock, portMAX_DELAY);
+    for (unsigned xi = 0; xi < sizeof xs / sizeof xs[0]; xi++) {
+        for (unsigned qi = 0; qi < sizeof qs / sizeof qs[0]; qi++) {
+            camera_deinit();
+            camera_set_xclk(xs[xi]);          /* saved, but nothing is running yet */
+            camera_set_quality(qs[qi]);
+            if (camera_init() != ESP_OK) { printf("  %4d %7d | camera init failed\n", xs[xi], qs[qi]); continue; }
+            camera_probe_t pr;
+            camera_probe_frames(10, &pr);
+            printf("  %4d %7d | %4d %3d %7d | %6d %6d | %8d | %8u\n", xs[xi], qs[qi], pr.good, pr.bad, pr.timeouts,
+                   pr.no_soi, pr.no_eoi, pr.ms_per_frame, (unsigned)(pr.avg_bytes / 1024));
+            uint8_t *jpeg = NULL;
+            size_t len = 0;
+            if (camera_capture_jpeg(ui_get_rotation(), &jpeg, &len) == ESP_OK) {
+                char name[STORAGE_NAME_LEN];
+                snprintf(name, sizeof name, "sweep-x%d-q%d.jpg", xs[xi], qs[qi]);
+                esp_err_t err = storage_save_named(name, jpeg, len);
+                if (err != ESP_OK) printf("       (could not save %s: %s)\n", name, esp_err_to_name(err));
+                free(jpeg);
+            }
+        }
+    }
+    camera_deinit();
+    camera_set_xclk(old_x);
+    camera_set_quality(old_q);
+    xSemaphoreGive(s_cam_lock);
+    printf("sweep done, settings restored (xclk %d, quality %d). Compare the sweep-*.jpg files: fewest stripes wins, then `cam xclk N`.\n", old_x, old_q);
+}
+
 /* ---- remote snapshot -------------------------------------------------------------- */
 
 bool camui_peek(void) { return s_peek; }

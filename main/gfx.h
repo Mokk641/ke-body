@@ -37,6 +37,9 @@ void gfx_fill_circle(int cx, int cy, int r, uint16_t color);                    
 void gfx_ring(float cx, float cy, float r, float thickness, uint16_t color);          /* anti-aliased circle outline */
 void gfx_line(float x0, float y0, float x1, float y1, float width, uint16_t color);   /* anti-aliased, round caps */
 
+/* Blend `color` through an 8-bit coverage mask (255 = full colour) at x,y; clipped. */
+void gfx_blit_mask(int x, int y, const uint8_t *mask, int w, int h, uint16_t color);
+
 /* Copy a byte-swapped RGB565 image (same format as the framebuffer) to x,y; clipped. */
 void gfx_blit(int x, int y, const uint16_t *src, int src_w, int src_h);
 

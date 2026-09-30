@@ -55,6 +55,8 @@ void app_on_long_press(void) { n_long_press++; }
 void app_on_long_release(void) { n_long_release++; }
 void app_on_swipe(int dir) { n_swipes++; last_swipe = dir; }
 void app_on_touch_activity(void) {}
+static int n_ink_sent; static size_t last_ink_len; static uint8_t last_ink_sig[8];
+void app_send_ink(const uint8_t *png, size_t len) { n_ink_sent++; last_ink_len = len; memcpy(last_ink_sig, png, 8); }
 
 static void reset_counts(void) { n_taps = n_long_press = n_long_release = n_swipes = 0; }
 
@@ -379,6 +381,83 @@ int main(void)
     CHECK(ui_hit_test(st, 20, gfx_height() - 10) == UI_HIT_PLUS && ui_hit_test(st, gfx_width() - 20, gfx_height() - 10) == UI_HIT_CAM_BTN,
           "+ at the bottom left, camera at the bottom right");
     CHECK(ui_hit_test(st, 20, 20) == UI_HIT_TOP_BACK && ui_hit_test(st, 70, 20) == UI_HIT_TOPBAR, "top bar: ⌄ at the far left, face + name are part of the bar");
+
+    /* ---- handwriting ---- */
+    to_chat();
+    tap_hit(UI_HIT_PLUS); settle();
+    CHECK(tap_hit(UI_HIT_INK_OPEN) && n_taps == 0, "the 手写 capsule in the + panel is a button");
+    snap();
+    CHECK(st->screen == UI_SCREEN_INK && st->ink != NULL, "tap 手写 -> handwriting page");
+    int padx, pady, pads;
+    ui_ink_pad_rect(&padx, &pady, &pads);
+    CHECK(pads >= 250, "the writing square is big (%d px)", pads);
+    /* write one stroke: finger down, slide, up; the controller reports no coordinates on release */
+    host_now_us += 30000; ui_touch(true, padx + pads / 4, pady + pads / 2);
+    for (int i = 1; i <= 12; i++) { host_now_us += 8000; ui_touch(true, padx + pads / 4 + i * pads / 24, pady + pads / 2 + (i % 3) * 6); }
+    host_now_us += 8000; ui_touch(false, 0, 0);
+    snap();
+    CHECK(st->ink->cur.nstrokes == 1 && st->ink->cur.npts >= 8 && n_taps == 0 && !st->ink->pen_down, "one stroke drawn (%d points), no tap, pen lifted", st->ink->cur.npts);
+    CHECK(st->ink->cur.pts[0].x < 300 && st->ink->cur.pts[0].y > 400 && st->ink->cur.pts[0].y < 600, "points are normalised to the pad (first at %d,%d)", st->ink->cur.pts[0].x, st->ink->cur.pts[0].y);
+    /* a long slow press does not turn into a voice recording */
+    reset_counts();
+    for (int i = 0; i < 25; i++) { host_now_us += 30000; ui_touch(true, padx + pads / 2, pady + pads / 2); }
+    host_now_us += 30000; ui_touch(false, 0, 0);
+    snap();
+    CHECK(n_long_press == 0 && st->ink->cur.nstrokes == 2, "holding on the pad makes a dot, not a recording");
+    /* dragging off the pad keeps writing but clamped to the edge */
+    host_now_us += 30000; ui_touch(true, padx + pads / 2, pady + pads / 2);
+    host_now_us += 30000; ui_touch(true, padx + pads + 50, pady + pads / 2);
+    host_now_us += 30000; ui_touch(false, 0, 0);
+    snap();
+    CHECK(st->ink->cur.nstrokes == 3 && st->ink->cur.pts[st->ink->cur.npts - 1].x == INK_RANGE - 1, "a stroke that leaves the pad is clamped to its edge");
+
+    CHECK(tap_hit(UI_HIT_INK_UNDO), "撤销一笔 button");
+    snap();
+    CHECK(st->ink->cur.nstrokes == 2, "撤销一笔 removed the last stroke");
+    tap_hit(UI_HIT_INK_NEXT);
+    snap();
+    CHECK(st->ink->ndone == 1 && st->ink->cur.nstrokes == 0, "下一个 moved the character up into the strip");
+    tap_hit(UI_HIT_INK_SEND);
+    CHECK(n_ink_sent == 1, "寄 sent the committed character as one PNG");
+    n_ink_sent = 0;
+    snap();
+    CHECK(st->screen == UI_SCREEN_CHAT && st->ink->ndone == 0, "after 寄: back in the chat, paper cleared");
+    CHECK(st->msg_count > 0 && st->msgs[st->msg_count - 1].ink_slot > 0 && st->msgs[st->msg_count - 1].who == CHAT_HER, "her side shows the handwriting thumbnail");
+    {
+        int tw2, th2;
+        CHECK(ink_thumb_get(st->msgs[st->msg_count - 1].ink_slot - 1, &tw2, &th2) != NULL, "thumbnail is in the pool (%dx%d)", tw2, th2);
+    }
+    /* second round: write, tap 寄 directly (auto-commit), then empty 寄 */
+    ui_ink_open();
+    ui_ink_pad_rect(&padx, &pady, &pads);
+    host_now_us += 30000; ui_touch(true, padx + 30, pady + 30);
+    host_now_us += 8000; ui_touch(true, padx + 200, pady + 200);
+    host_now_us += 8000; ui_touch(false, 0, 0);
+    reset_counts();
+    tap_hit(UI_HIT_INK_SEND);
+    CHECK(n_ink_sent == 1 && last_ink_len > 100 && !memcmp(last_ink_sig, "\x89PNG\r\n\x1a\n", 8), "寄 commits the character on the pad and sends one PNG (%u bytes)", (unsigned)last_ink_len);
+    ui_ink_open();
+    n_ink_sent = 0;
+    tap_hit(UI_HIT_INK_SEND);
+    snap();
+    CHECK(n_ink_sent == 0 && st->screen == UI_SCREEN_INK, "寄 on an empty page sends nothing and stays");
+    /* greyed while a send is in progress */
+    host_now_us += 30000; ui_touch(true, padx + 30, pady + 30);
+    host_now_us += 8000; ui_touch(true, padx + 200, pady + 200);
+    host_now_us += 8000; ui_touch(false, 0, 0);
+    ui_set_sending(true);
+    tap_hit(UI_HIT_INK_SEND);
+    CHECK(n_ink_sent == 0, "寄 is ignored while another send is in progress");
+    ui_set_sending(false);
+    CHECK(tap_hit(UI_HIT_INK_BACK), "back button");
+    snap();
+    CHECK(st->screen == UI_SCREEN_CHAT && st->ink->cur.nstrokes == 1, "back keeps the writing");
+    ui_ink_open();
+    tap_hit(UI_HIT_INK_CLEAR);
+    snap();
+    CHECK(st->ink->cur.nstrokes == 0, "清空 clears the pad");
+    ui_set_screen(UI_SCREEN_CHAT);
+    settle();
 
     /* ---- sending: buttons are ignored while a message / photo is on its way ---- */
     to_chat();

@@ -12,6 +12,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_camera.h"
@@ -54,7 +56,7 @@ static int s_xclk_mhz = 10;      /* 20 -> 10: fewer stripes (PSRAM bandwidth sha
 static int s_quality = 10;       /* sensor JPEG quality register, 4..63, LOWER = better */
 static int s_rot_off = 0;        /* extra clockwise correction, 0/90/180/270 */
 static bool s_awb = true;
-static int s_wb_mode = 0;        /* 0 auto, 1 sunny, 2 cloudy, 3 office, 4 home */
+static int s_wb_mode = 3;        /* 0 auto, 1 sunny, 2 cloudy, 3 office, 4 home; office measured on the board (auto came out pink) */
 static uint16_t *s_preview[2];
 static int s_preview_idx;
 
@@ -305,6 +307,60 @@ esp_err_t camera_capture_jpeg(int display_rot, uint8_t **jpeg, size_t *len)
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     return j.err;
 }
+
+/* ---- frame-loss probe for `cam sweep` ---------------------------------------------------------------
+ * The driver drops a damaged frame itself and only logs "NO-SOI" / "NO-EOI"; a vprintf hook counts those lines. */
+static volatile int s_drop_soi, s_drop_eoi;
+static vprintf_like_t s_prev_vprintf;
+
+static int counting_vprintf(const char *fmt, va_list ap)
+{
+    if (strstr(fmt, "NO-SOI")) s_drop_soi++;
+    else if (strstr(fmt, "NO-EOI")) s_drop_eoi++;
+    return s_prev_vprintf ? s_prev_vprintf(fmt, ap) : vprintf(fmt, ap);
+}
+
+esp_err_t camera_probe_frames(int frames, camera_probe_t *out)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    sensor_t *s = esp_camera_sensor_get();
+    memset(out, 0, sizeof *out);
+    s->set_framesize(s, PHOTO_SIZE);
+    s->set_quality(s, s_quality);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    for (int i = 0; i < 3; i++) {                      /* settle */
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb) esp_camera_fb_return(fb);
+    }
+    s_drop_soi = s_drop_eoi = 0;
+    s_prev_vprintf = esp_log_set_vprintf(counting_vprintf);
+    int64_t t0 = esp_timer_get_time();
+    size_t total = 0;
+    for (int i = 0; i < frames; i++) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) { out->timeouts++; continue; }
+        if (fb->format == PIXFORMAT_JPEG && fb->len > 4 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8 &&
+            fb->buf[fb->len - 2] == 0xFF && fb->buf[fb->len - 1] == 0xD9) {
+            out->good++;
+            total += fb->len;
+        } else {
+            out->bad++;
+        }
+        esp_camera_fb_return(fb);
+    }
+    int64_t dt = esp_timer_get_time() - t0;
+    esp_log_set_vprintf(s_prev_vprintf);
+    out->no_soi = s_drop_soi;
+    out->no_eoi = s_drop_eoi;
+    out->ms_per_frame = frames ? (int)(dt / 1000 / frames) : 0;
+    out->avg_bytes = out->good ? total / out->good : 0;
+    s->set_framesize(s, PREVIEW_SIZE);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    return ESP_OK;
+}
+
+int camera_get_xclk(void) { if (!s_ready) load_settings(); return s_xclk_mhz; }
+int camera_get_quality(void) { if (!s_ready) load_settings(); return s_quality; }
 
 void camera_set_vflip(bool on)
 {

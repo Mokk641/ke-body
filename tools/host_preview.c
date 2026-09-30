@@ -20,6 +20,7 @@
 #include <string.h>
 #include "gfx.h"
 #include "ui_render.h"
+#include "ink.h"
 
 static void add(ui_state_t *s, int who, const char *face, const char *t)
 {
@@ -33,7 +34,8 @@ static void add(ui_state_t *s, int who, const char *face, const char *t)
 int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: %s out.ppm [options]\n", argv[0]); return 1; }
-    bool land = true, few = false;
+    bool land = true, few = false, thumb_msg = false;
+    int ink_chars = 0;
     ui_state_t *s = calloc(1, sizeof(ui_state_t));
     s->pressed = UI_HIT_NONE;
     s->theme = UI_THEME_DARK;
@@ -50,7 +52,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--light")) s->theme = UI_THEME_LIGHT;
         else if (!strcmp(a, "--page")) {
             const char *v = ARG;
-            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : UI_SCREEN_FACE;
+            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : !strcmp(v, "ink") ? UI_SCREEN_INK : UI_SCREEN_FACE;
         }
         else if (!strcmp(a, "--slide")) s->page_pos = atoi(ARG);
         else if (!strcmp(a, "--panel")) { s->panel_pos = atoi(ARG); s->panel_open = s->panel_pos > 0; }
@@ -69,6 +71,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--scroll")) s->scroll = atoi(ARG);
         else if (!strcmp(a, "--few")) few = true;
         else if (!strcmp(a, "--sending")) s->sending = true;
+        else if (!strcmp(a, "--ink")) ink_chars = atoi(ARG);
+        else if (!strcmp(a, "--thumb")) thumb_msg = true;
         else if (!strcmp(a, "--review")) s->review = true;
         else if (!strcmp(a, "--slidein")) s->slide_dy = atoi(ARG);
         else { fprintf(stderr, "unknown option %s\n", a); return 1; }
@@ -103,6 +107,28 @@ int main(int argc, char **argv)
     if (s->screen == UI_SCREEN_CAMERA) snprintf(s->cam_text, sizeof s->cam_text, "已保存 20260929-121500.jpg");
     if (s->screen == UI_SCREEN_CHAT && s->page_pos == 0) s->page_pos = 255;
 
+    /* handwriting samples: a cross, a wavy line and a circle-ish stroke, repeated */
+    static ink_t ink;
+    for (int c = 0; c < ink_chars; c++) {
+        ink_pen_down(&ink, 120, 500); for (int x = 160; x <= 900; x += 40) ink_pen_move(&ink, x, 500 + (c % 3) * 20); ink_pen_up(&ink);
+        ink_pen_down(&ink, 500, 100); for (int y = 140; y <= 900; y += 40) ink_pen_move(&ink, 500 - (c % 2) * 30, y); ink_pen_up(&ink);
+        ink_pen_down(&ink, 250, 250); for (int a = 0; a <= 20; a++) ink_pen_move(&ink, 250 + a * 20, 250 + (int)(200 * (1 - (a - 10) * (a - 10) / 100.0))); ink_pen_up(&ink);
+        ink_next(&ink);
+    }
+    if (s->screen == UI_SCREEN_INK) {          /* a character half written on the pad */
+        ink_pen_down(&ink, 150, 300); for (int x = 190; x <= 850; x += 30) ink_pen_move(&ink, x, 300 + (x % 90)); ink_pen_up(&ink);
+        ink_pen_down(&ink, 300, 150); for (int y = 190; y <= 850; y += 30) ink_pen_move(&ink, 300 + (y % 70), y); ink_pen_up(&ink);
+    }
+    s->ink = &ink;
+    if (thumb_msg) {
+        static uint8_t mask[INK_THUMB_MAX_W * INK_THUMB_MAX_H];
+        int tw, th;
+        if (ink.ndone == 0) { for (int c = 0; c < 4; c++) { ink_pen_down(&ink, 200, 200); ink_pen_move(&ink, 800, 800); ink_pen_move(&ink, 200, 800); ink_pen_up(&ink); ink_next(&ink); } }
+        ink_make_thumb(&ink, mask, &tw, &th);
+        int slot = ink_thumb_store(mask, tw, th);
+        chat_msg_t *m = &s->msgs[s->msg_count++];
+        m->who = CHAT_HER; snprintf(m->text, sizeof m->text, "[手写]"); m->ink_slot = (uint8_t)(slot + 1);
+    }
     ui_render(s);
 
     FILE *o = fopen(argv[1], "wb");

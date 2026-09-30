@@ -21,4 +21,7 @@ void bridge_send_text(const char *text);
 /* Queue a JPEG for POST /photo; the buffer is copied. */
 void bridge_send_photo(const uint8_t *jpeg, size_t len);
 
+/* Queue a handwritten sentence (PNG) for POST /ink; the buffer is copied. */
+void bridge_send_ink(const uint8_t *png, size_t len);
+
 void bridge_start(void);
