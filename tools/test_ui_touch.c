@@ -461,6 +461,69 @@ int main(void)
     ui_set_screen(UI_SCREEN_CHAT);
     settle();
 
+    /* ---- handwriting: long sentences, scrollable strip ---- */
+    ui_ink_open();
+    ui_ink_pad_rect(&padx, &pady, &pads);
+    for (int i = 0; i < 25; i++) {
+        host_now_us += 400000; ui_touch(true, padx + 20 + i * 5, pady + 30);
+        host_now_us += 8000;   ui_touch(true, padx + 120 + i * 3, pady + 150);
+        host_now_us += 8000;   ui_touch(false, 0, 0);
+        tap_hit(UI_HIT_INK_NEXT);
+    }
+    snap();
+    CHECK(st->ink->ndone == 25, "25 characters in one sentence (limit is %d)", INK_MAX_CHARS);
+    int cap = ui_ink_strip_cap(), cell = ui_ink_strip_cell();
+    CHECK(cap < 25 && cap >= 6, "the strip shows %d at a time, so it has to scroll", cap);
+    CHECK(st->ink_scroll == 0, "the strip follows the newest character");
+    {
+        int stx = 100, sty = 20;
+        CHECK(ui_hit_test(st, stx, sty) == UI_HIT_INK_STRIP, "the strip is touchable");
+        host_now_us += 400000;
+        ui_touch(true, stx, sty);
+        for (int i = 1; i <= 8; i++) { host_now_us += 8000; ui_touch(true, stx + i * cell / 2, sty); }
+        host_now_us += 8000; ui_touch(false, 0, 0);
+        snap();
+        CHECK(st->ink_scroll >= 3 && st->ink_scroll <= 5, "dragging the strip right scrolls back to earlier characters (%d)", st->ink_scroll);
+        host_now_us += 400000;
+        ui_touch(true, stx + 4 * cell, sty);
+        for (int i = 1; i <= 40; i++) { host_now_us += 8000; ui_touch(true, stx + 4 * cell - i * cell / 2, sty); }
+        host_now_us += 8000; ui_touch(false, 0, 0);
+        snap();
+        CHECK(st->ink_scroll == 0, "dragging left brings it back to the newest, and not beyond");
+        host_now_us += 400000;
+        ui_touch(true, stx, sty);
+        for (int i = 1; i <= 200; i++) { host_now_us += 8000; ui_touch(true, stx + i * cell, sty); }
+        host_now_us += 8000; ui_touch(false, 0, 0);
+        snap();
+        CHECK(st->ink_scroll == st->ink->ndone - cap, "the strip stops at the first character (%d)", st->ink_scroll);
+    }
+    for (int i = 0; i < 20; i++) {                        /* fill it up: 40 and no more */
+        host_now_us += 400000; ui_touch(true, padx + 30, pady + 30);
+        host_now_us += 8000;   ui_touch(true, padx + 90, pady + 90);
+        host_now_us += 8000;   ui_touch(false, 0, 0);
+        tap_hit(UI_HIT_INK_NEXT);
+    }
+    snap();
+    CHECK(st->ink->ndone == INK_MAX_CHARS, "the sentence stops at %d characters (%d)", INK_MAX_CHARS, st->ink->ndone);
+    n_ink_sent = 0;
+    tap_hit(UI_HIT_INK_SEND);
+    CHECK(n_ink_sent == 1 && last_ink_len > 1000, "40 characters go out as one PNG (%u bytes)", (unsigned)last_ink_len);
+    snap();
+    CHECK(st->screen == UI_SCREEN_CHAT && st->ink->ndone == 0 && st->ink_scroll == 0, "and the page is clean afterwards");
+    {
+        int before = st->msg_count;
+        int nm = n_new_msg;
+        uint8_t m[64 * 32];
+        memset(m, 255, sizeof m);
+        int slot = ink_thumb_store(m, 64, 32);
+        ui_ke_ink(slot);
+        snap();
+        CHECK(st->msg_count == before + 1 && st->msgs[st->msg_count - 1].who == CHAT_KE && st->msgs[st->msg_count - 1].ink_slot == slot + 1,
+              "handwriting from Ke arrives as a picture bubble on his side");
+        CHECK(n_new_msg == nm + 1, "and raises the usual new-message alert");
+    }
+    to_chat();
+
     /* ---- bigger touch areas near the bottom ---- */
     {
         ui_set_screen(UI_SCREEN_INK);

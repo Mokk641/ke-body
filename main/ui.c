@@ -530,7 +530,7 @@ void ui_chat_add(chat_who_t who, const char *utf8)
     mark_dirty();
 }
 
-void ui_chat_add_ink(int thumb_slot)
+static void chat_add_ink(chat_who_t who, int thumb_slot)
 {
     lock();
     if (s_state->msg_count == UI_CHAT_MAX) {
@@ -539,7 +539,7 @@ void ui_chat_add_ink(int thumb_slot)
     }
     chat_msg_t *m = &s_state->msgs[s_state->msg_count++];
     memset(m, 0, sizeof *m);
-    m->who = CHAT_HER;
+    m->who = who;
     strcpy(m->text, "[手写]");
     m->ink_slot = thumb_slot >= 0 ? (uint8_t)(thumb_slot + 1) : 0;
     s_state->scroll = 0;
@@ -549,7 +549,30 @@ void ui_chat_add_ink(int thumb_slot)
     mark_dirty();
 }
 
+void ui_chat_add_ink(int thumb_slot) { chat_add_ink(CHAT_HER, thumb_slot); }
+
 void app_on_new_message(void);
+
+/* Ke sent something (not plain text): same reactions as ui_set_say - the face looks up on the face page, alert */
+static void ke_arrived(void)
+{
+    lock();
+    s_state->line_alpha = 0;
+    if (s_state->screen == UI_SCREEN_FACE && !s_sleeping) {
+        s_notice_ms = NOTICE_MS;
+        recompute();
+    }
+    unlock();
+    mark_dirty();
+    ui_flash_border();
+    app_on_new_message();
+}
+
+void ui_ke_ink(int thumb_slot)
+{
+    chat_add_ink(CHAT_KE, thumb_slot);
+    ke_arrived();
+}
 
 void ui_set_say(const char *utf8)
 {
@@ -880,13 +903,14 @@ static void ink_send_now(void)
     size_t len = 0;
     int w, h;
     if (!ink_make_png(s_ink, &png, &len, &w, &h)) { ui_toast("生成图片失败", 2000); return; }
-    uint8_t *mask = heap_caps_malloc(INK_THUMB_MAX_W * INK_THUMB_MAX_H, MALLOC_CAP_SPIRAM);
+    uint8_t *mask = heap_caps_malloc(INK_HAND_W * INK_HAND_H, MALLOC_CAP_SPIRAM);
     int tw, th, slot = -1;
     if (mask && ink_make_thumb(s_ink, mask, &tw, &th)) slot = ink_thumb_store(mask, tw, th);
     free(mask);
     app_send_ink(png, len);
     free(png);
     ink_reset(s_ink);
+    lock(); s_state->ink_scroll = 0; unlock();
     ui_chat_add_ink(slot);
     ui_set_screen(UI_SCREEN_CHAT);
 }
@@ -897,8 +921,10 @@ static bool handle_tap_in_ui(int hit)
     case UI_HIT_INK_OPEN:  ui_ink_open(); return true;
     case UI_HIT_INK_BACK:  ui_set_screen(UI_SCREEN_CHAT); return true;
     case UI_HIT_INK_PAD:   return true;
+    case UI_HIT_INK_STRIP: return true;
     case UI_HIT_INK_NEXT:
-        if (!ink_next(s_ink) && !ink_is_empty(&s_ink->cur)) ui_toast("最多写 16 个字", 1500);
+        lock(); s_state->ink_scroll = 0; unlock();                     /* the strip follows the newest character again */
+        if (!ink_next(s_ink) && !ink_is_empty(&s_ink->cur)) ui_toast("最多写 40 个字", 1500);
         mark_dirty();
         return true;
     case UI_HIT_INK_UNDO:  ink_undo(s_ink); mark_dirty(); return true;
@@ -1029,6 +1055,21 @@ void ui_touch(bool down, int x, int y)
             TLOG("drag started at (%d,%d), moved %d,%d from hit=%d", x, y, dx, dy, s_hit);
             s_axis_v = abs(dy) >= abs(dx);
             set_pressed(UI_HIT_NONE);
+        }
+        if (s_dragging && !s_axis_v && s_hit == UI_HIT_INK_STRIP && s_ink) {
+            /* the strip of characters slides with the finger: dragging right shows earlier characters */
+            static int accum;
+            accum += x - s_last_x;
+            int cell = ui_ink_strip_cell(), steps = accum / cell;
+            if (steps) {
+                accum -= steps * cell;
+                int max = s_ink->ndone - ui_ink_strip_cap();
+                lock();
+                int v = s_state->ink_scroll + steps;
+                s_state->ink_scroll = v < 0 ? 0 : (v > max ? (max < 0 ? 0 : max) : v);
+                unlock();
+                mark_dirty();
+            }
         }
         if (s_dragging && s_axis_v && s_hit == UI_HIT_CHAT) {
             /* content follows the finger: dragging down reveals older messages */

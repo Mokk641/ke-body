@@ -4,6 +4,8 @@
 #include "audio.h"
 #include "light.h"
 #include "cam_ui.h"
+#include "png.h"
+#include "ink.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -38,6 +40,32 @@ static int read_body(httpd_req_t *req, char *buf, size_t buf_size)
     /* strip trailing newlines */
     while (got && (buf[got - 1] == '\n' || buf[got - 1] == '\r')) buf[--got] = 0;
     return (int)got;
+}
+
+/* Read a big binary body (PNG, JPEG ...) into a PSRAM buffer. false = an error reply has been sent. */
+static bool recv_alloc(httpd_req_t *req, size_t max, uint8_t **buf, size_t *len)
+{
+    size_t total = req->content_len;
+    if (total == 0 || total > max) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, total ? "body too big" : "empty body");
+        return false;
+    }
+    uint8_t *b = heap_caps_malloc(total + 1, MALLOC_CAP_SPIRAM);
+    if (!b) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory"); return false; }
+    size_t got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, (char *)b + got, total - got);
+        if (r <= 0) {
+            if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            free(b);
+            return false;
+        }
+        got += (size_t)r;
+    }
+    b[got] = 0;
+    *buf = b;
+    *len = got;
+    return true;
 }
 
 static esp_err_t ok(httpd_req_t *req)
@@ -78,6 +106,29 @@ static esp_err_t heard_post(httpd_req_t *req)
     int n = read_body(req, body, sizeof body);
     if (n < 0) return ESP_FAIL;
     if (n > 0) ui_chat_add(CHAT_HER, body);
+    return ok(req);
+}
+
+/* POST /ink: a PNG of Ke's handwriting -> a picture bubble on Ke's side (white ink, whatever the PNG's colours) */
+static esp_err_t ink_post(httpd_req_t *req)
+{
+    uint8_t *buf;
+    size_t n;
+    if (!recv_alloc(req, 1024 * 1024, &buf, &n)) return ESP_FAIL;
+    int bw, bh;
+    ui_chat_picture_box(&bw, &bh);
+    if (bw > INK_THUMB_MAX_W) bw = INK_THUMB_MAX_W;
+    if (bh > INK_THUMB_MAX_H) bh = INK_THUMB_MAX_H;
+    uint8_t *mask = NULL;
+    int w, h;
+    bool good = png_decode_ink_mask(buf, n, bw, bh, &mask, &w, &h);
+    free(buf);
+    if (!good) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a PNG the board can read (no interlacing; max 8192 px, 6 MB unpacked)");
+    int slot = ink_thumb_store(mask, w, h);
+    free(mask);
+    if (slot < 0) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+    ESP_LOGI(TAG, "ink from Ke: %u bytes -> %dx%d", (unsigned)n, w, h);
+    ui_ke_ink(slot);
     return ok(req);
 }
 
@@ -281,6 +332,7 @@ esp_err_t http_api_start(void)
         { .uri = "/brightness", .method = HTTP_POST, .handler = brightness_post },
         { .uri = "/theme",  .method = HTTP_POST, .handler = theme_post },
         { .uri = "/heard",  .method = HTTP_POST, .handler = heard_post },
+        { .uri = "/ink",    .method = HTTP_POST, .handler = ink_post },
         { .uri = "/buttons", .method = HTTP_POST, .handler = buttons_post },
         { .uri = "/buttons", .method = HTTP_GET,  .handler = buttons_get },
         { .uri = "/anim",   .method = HTTP_POST, .handler = anim_post },

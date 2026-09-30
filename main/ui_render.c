@@ -385,7 +385,7 @@ static void draw_chat_area(const palette_t *p, const ui_state_t *s, const geo_t 
             bool her = m->who == CHAT_HER;
             int x = her ? g->W - BUB_MARGIN - ml.w : BUB_MARGIN;
             gfx_fill_round_rect(x, y, ml.w, ml.h, BUB_R, her ? p->her_bub : p->ke_bub);
-            if (ml.thumb) gfx_blit_mask(x + THUMB_PAD, y + (ml.h - ml.th) / 2, ml.thumb, ml.tw, ml.th, p->her_txt);   /* white ink straight on her bubble */
+            if (ml.thumb) gfx_blit_mask(x + THUMB_PAD, y + (ml.h - ml.th) / 2, ml.thumb, ml.tw, ml.th, her ? p->her_txt : p->ke_txt);   /* white ink straight on her bubble */
             for (int k = 0; k < ml.lines; k++) {
                 gfx_draw_text_n(f, x + BUB_PADX, y + BUB_PADY + k * lh + f->ascent, ml.ln[k].start, ml.ln[k].len,
                                 her ? p->her_txt : p->ke_txt);
@@ -680,6 +680,27 @@ static void ink_layout(int W, int H, ink_geo_t *L)
     L->strip_w = W - 10 - L->strip_x;
 }
 
+void ui_chat_picture_box(int *w, int *h)
+{
+    *w = bubble_max_w(gfx_width()) - 2 * THUMB_PAD;
+    *h = 150;
+}
+
+int ui_ink_strip_cell(void)
+{
+    ink_geo_t L;
+    ink_layout(gfx_width(), gfx_height(), &L);
+    return L.strip_h - 6;
+}
+
+int ui_ink_strip_cap(void)
+{
+    ink_geo_t L;
+    ink_layout(gfx_width(), gfx_height(), &L);
+    int cap = (L.strip_w - 12) / (L.strip_h - 6);
+    return cap < 1 ? 1 : cap;
+}
+
 void ui_ink_pad_rect(int *x, int *y, int *side)
 {
     ink_geo_t L;
@@ -768,12 +789,16 @@ static void draw_ink_screen(const palette_t *p, const ui_state_t *s, const geo_t
         int cell = L.strip_h - 6;
         int cap = (L.strip_w - 12) / cell;
         if (cap < 1) cap = 1;
-        int first = n > cap ? n - cap : 0;
-        for (int i = first; i < n; i++) {
+        int back = s->ink_scroll < 0 ? 0 : s->ink_scroll;                 /* how far the strip is scrolled back */
+        if (back > n - cap) back = n > cap ? n - cap : 0;
+        int last = n - back;                                              /* one past the last visible */
+        int first = last > cap ? last - cap : 0;
+        for (int i = first; i < last; i++) {
             float ox = (float)(L.strip_x + 6 + (i - first) * cell) + 3.f, oy = (float)L.strip_y + 6.f;
             ink_draw_char(&ink->done[i], ox, oy, (float)(cell - 6) / (float)INK_RANGE, 2.2f, p->face);
         }
-        if (first > 0) gfx_fill_circle(L.strip_x + 5, L.strip_y + L.strip_h / 2, 2, p->dim);      /* more to the left */
+        if (first > 0) gfx_fill_circle(L.strip_x + 5, L.strip_y + L.strip_h / 2, 2, p->dim);                   /* more to the left */
+        if (back > 0) gfx_fill_circle(L.strip_x + L.strip_w - 5, L.strip_y + L.strip_h / 2, 2, p->dim);        /* and to the right */
     }
 
     /* the square: faint guide lines, then the current character */
@@ -929,6 +954,7 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
         for (int i = 0; i < 4; i++)
             if (in_rect(px, py, L.bx[i] - L.hl[i], L.by[i] - L.hu[i], L.bw + L.hl[i] + L.hr[i], L.bh + L.hu[i] + L.hd[i])) return ids[i];
         if (in_rect(px, py, L.pad_x, L.pad_y, L.pad, L.pad)) return UI_HIT_INK_PAD;
+        if (in_rect(px, py, L.strip_x, L.strip_y, L.strip_w, L.strip_h)) return UI_HIT_INK_STRIP;
         return UI_HIT_NONE;
     }
 

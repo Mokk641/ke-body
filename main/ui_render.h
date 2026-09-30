@@ -78,6 +78,7 @@ typedef struct {
     /* camera / gallery screens */
     const uint16_t *frame;    /* byte-swapped RGB565 image to show (preview or photo), or NULL */
     int frame_w, frame_h;
+    int ink_scroll;           /* characters the strip is scrolled back from the newest (0 = follow the newest) */
     const ink_t *ink;         /* handwriting page: the strokes (owned by ui.c, read by the renderer) */
     int dot_x, dot_y, dot_ms; /* touch marker (touchlog on): where, and how much longer it stays */
     bool review;              /* gallery screen shows the photo just taken (retake / send / keep) */
@@ -109,6 +110,7 @@ enum {
     UI_HIT_INK_UNDO,       /* 撤销一笔 */
     UI_HIT_INK_CLEAR,      /* 清空 */
     UI_HIT_INK_SEND,       /* 寄 */
+    UI_HIT_INK_STRIP,      /* handwriting page: the strip of finished characters (drag sideways to scroll) */
     UI_HIT_TEST_EXIT,      /* colour test pattern: tap anywhere to leave */
     UI_HIT_PANEL,          /* open panel: empty part (also the panel while it is still sliding) */
     UI_HIT_TEXT_BTN0 = 100,   /* + index into text_btn */
@@ -133,6 +135,13 @@ int ui_emoji_pages(const ui_state_t *s);
  * is already on the screen (same pen as the full render) and return the changed rectangle (screen px, x1/y1 exclusive).
  * false when nothing was drawn. Used while the pen is down so a line appears at once; the pen-up redraws it smooth. */
 bool ui_render_ink_incremental(const ui_state_t *s, int from, int to, int *x0, int *y0, int *x1, int *y1);
+
+/* The largest picture that fits a chat bubble in the current orientation (for POST /ink and /image thumbnails). */
+void ui_chat_picture_box(int *w, int *h);
+
+/* Strip of finished characters: how many are visible at once and how wide each is (for scrolling). */
+int ui_ink_strip_cap(void);
+int ui_ink_strip_cell(void);
 
 /* The handwriting square in the current orientation (screen pixels): left, top, side. */
 void ui_ink_pad_rect(int *x, int *y, int *side);

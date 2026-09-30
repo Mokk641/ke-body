@@ -35,3 +35,9 @@ echo
 echo "== handwriting =="
 gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_ink" tools/test_ink.c main/ink.c -lm
 "$OUT/test_ink"
+
+echo
+echo "== png decoder =="
+python3 tools/make_test_pngs.py "$OUT/png" >/dev/null
+gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_png" tools/test_png.c main/png.c main/ink.c -lm
+"$OUT/test_png" "$OUT/png"

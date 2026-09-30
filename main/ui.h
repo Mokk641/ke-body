@@ -17,7 +17,8 @@ void ui_override_corner(const char *utf8);
 
 /* chat */
 void ui_chat_add(chat_who_t who, const char *utf8);
-void ui_chat_add_ink(int thumb_slot);   /* her handwriting: a small picture bubble on her side */   /* appends (Ke's carry the current face as avatar), scrolls to bottom */
+void ui_chat_add_ink(int thumb_slot);   /* her handwriting: a small picture bubble on her side */
+void ui_ke_ink(int thumb_slot);         /* Ke's handwriting (POST /ink): a picture bubble on his side + the usual alert */   /* appends (Ke's carry the current face as avatar), scrolls to bottom */
 void ui_set_say(const char *utf8);     /* Ke's message: chat + face-page line + "(—o—)" notice; "" is ignored */
 void ui_toast(const char *utf8, int ms);
 void ui_scroll_by(int dy);

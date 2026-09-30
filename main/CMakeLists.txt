@@ -19,6 +19,7 @@ idf_component_register(
         "imu.c"
         "camera.c"
         "ink.c"
+        "png.c"
         "imgrot.c"
         "storage.c"
         "cam_ui.c"

@@ -170,13 +170,19 @@ bool ink_make_thumb(const ink_t *k, uint8_t *mask, int *w, int *h)
 {
     int n = k->ndone;
     if (n <= 0) return false;
-    int cols = n < INK_THUMB_PER_ROW ? n : INK_THUMB_PER_ROW;
-    int rows = (n + INK_THUMB_PER_ROW - 1) / INK_THUMB_PER_ROW;
-    if (rows > 3) rows = 3, n = 3 * INK_THUMB_PER_ROW;
-    *w = cols * INK_THUMB_CELL;
-    *h = rows * INK_THUMB_CELL;
+    static const int cells[] = { 32, 24, 20, 16 };
+    int cell = cells[3];
+    for (unsigned i = 0; i < sizeof cells / sizeof cells[0]; i++) {
+        if ((INK_HAND_W / cells[i]) * (INK_HAND_H / cells[i]) >= n) { cell = cells[i]; break; }
+    }
+    const int per_row = INK_HAND_W / cell, max_rows = INK_HAND_H / cell;
+    int rows = (n + per_row - 1) / per_row;
+    if (rows > max_rows) { rows = max_rows; n = per_row * max_rows; }
+    const int cols = n < per_row ? n : per_row;
+    *w = cols * cell;
+    *h = rows * cell;
     memset(mask, 0, (size_t)*w * *h);
-    raster_chars(k->done, n, INK_THUMB_CELL, INK_THUMB_PER_ROW, 3.f, 2.6f, mask, *w, *h);
+    raster_chars(k->done, n, cell, per_row, (float)cell * 0.09f, (float)cell * 0.081f < 1.6f ? 1.6f : (float)cell * 0.081f, mask, *w, *h);
     return true;
 }
 
@@ -258,10 +264,12 @@ bool ink_make_png(const ink_t *k, uint8_t **png, size_t *len, int *w, int *h)
 {
     int n = k->ndone;
     if (n <= 0) return false;
-    int W = n * INK_PNG_CELL, H = INK_PNG_CELL;
+    int per_row = n < INK_PNG_PER_ROW ? n : INK_PNG_PER_ROW;
+    int rows = (n + INK_PNG_PER_ROW - 1) / INK_PNG_PER_ROW;
+    int W = per_row * INK_PNG_CELL, H = rows * INK_PNG_CELL;
     uint8_t *cov = big_alloc((size_t)W * H);
     if (!cov) return false;
-    raster_chars(k->done, n, INK_PNG_CELL, n, 8.f, 6.5f, cov, W, H);
+    raster_chars(k->done, n, INK_PNG_CELL, per_row, 8.f, 6.5f, cov, W, H);
     for (size_t i = 0; i < (size_t)W * H; i++) cov[i] = (uint8_t)(255 - cov[i]);     /* black on white */
     bool ok = ink_png_from_gray(cov, W, H, png, len);
     free(cov);

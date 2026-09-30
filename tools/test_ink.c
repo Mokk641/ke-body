@@ -98,13 +98,28 @@ int main(void)
     free(png);
 
     /* thumbnail */
-    uint8_t *mask = malloc(INK_THUMB_MAX_W * INK_THUMB_MAX_H);
+    uint8_t *mask = malloc(INK_HAND_W * INK_HAND_H);
     int tw, th;
-    CHECK(ink_make_thumb(k, mask, &tw, &th) && tw == 2 * INK_THUMB_CELL && th == INK_THUMB_CELL, "thumbnail %dx%d", tw, th);
+    CHECK(ink_make_thumb(k, mask, &tw, &th) && tw == 64 && th == 32, "thumbnail %dx%d", tw, th);
     int ink_px = 0; for (int i = 0; i < tw * th; i++) if (mask[i] > 128) ink_px++;
     CHECK(ink_px > 100, "thumbnail has ink (%d px)", ink_px);
     for (int i = 0; i < 13; i++) { ink_reset(k); for (int j = 0; j <= i; j++) { line(k, 100, 100, 900, 900); ink_next(k); } }
-    CHECK(ink_make_thumb(k, mask, &tw, &th) && tw == INK_THUMB_PER_ROW * INK_THUMB_CELL && th == 3 * INK_THUMB_CELL, "13 characters wrap to 3 rows of %d (%dx%d)", INK_THUMB_PER_ROW, tw, th);
+    CHECK(ink_make_thumb(k, mask, &tw, &th) && tw == 192 && th == 96, "13 characters wrap to 3 rows of 6 at 32 px (%dx%d)", tw, th);
+    /* 40 characters: smaller cells, still inside the box; and a multi-row PNG */
+    ink_reset(k);
+    for (int i = 0; i < INK_MAX_CHARS; i++) { line(k, 100, 100 + i * 15, 900, 900 - i * 15); ink_next(k); }
+    CHECK(k->ndone == 40 && !ink_next(k), "40 characters fit, the 41st is refused");
+    CHECK(ink_make_thumb(k, mask, &tw, &th) && tw <= INK_HAND_W && th <= INK_HAND_H && tw == 192 && th == 64, "40 characters -> thumbnail at 16 px, 12 per row, 4 rows (%dx%d)", tw, th);
+    uint8_t *png2 = NULL; size_t plen2 = 0; int pw2, ph2;
+    CHECK(ink_make_png(k, &png2, &plen2, &pw2, &ph2) && pw2 == 16 * INK_PNG_CELL && ph2 == 3 * INK_PNG_CELL, "40 characters -> PNG of 3 rows of 16 (%dx%d)", pw2, ph2);
+    free(png2);
+    ink_reset(k);
+    for (int i = 0; i < 17; i++) { line(k, 100, 100, 900, 900); ink_next(k); }
+    CHECK(ink_make_png(k, &png2, &plen2, &pw2, &ph2) && pw2 == 16 * INK_PNG_CELL && ph2 == 2 * INK_PNG_CELL, "17 characters wrap after 16 (%dx%d)", pw2, ph2);
+    free(png2);
+    ink_reset(k);
+    for (int i = 0; i < 13; i++) { line(k, 100, 100, 900, 900); ink_next(k); }
+    ink_make_thumb(k, mask, &tw, &th);
     int slot = ink_thumb_store(mask, tw, th);
     int gw, gh;
     const uint8_t *g = ink_thumb_get(slot, &gw, &gh);

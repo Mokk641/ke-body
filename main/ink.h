@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define INK_RANGE       1024
-#define INK_MAX_CHARS   16      /* characters in one sentence */
+#define INK_MAX_CHARS   40      /* characters in one sentence */
 #define INK_MAX_STROKES 32      /* per character */
 #define INK_MAX_PTS     800     /* per character */
 
@@ -47,18 +47,20 @@ typedef void (*ink_seg_fn)(void *ctx, float x0, float y0, float x1, float y1);
 void ink_flatten(const ink_char_t *c, int stroke, float ox, float oy, float scale, ink_seg_fn seg, void *ctx);
 
 /* ---- rendering for sending ------------------------------------------------------------------------------- */
-#define INK_PNG_CELL   96       /* PNG height and the width of every character */
-#define INK_THUMB_CELL 32
-#define INK_THUMB_PER_ROW 6
-#define INK_THUMB_MAX_W (INK_THUMB_CELL * INK_THUMB_PER_ROW)
-#define INK_THUMB_MAX_H (INK_THUMB_CELL * 3)
+#define INK_PNG_CELL   96       /* height of a PNG row and the width of every character */
+#define INK_PNG_PER_ROW 16      /* more characters than this wrap onto further rows */
+#define INK_HAND_W 192          /* the box for her own handwriting in the chat: characters at 32, 24, 20 or 16 px fit 18, 32, 36, 72 */
+#define INK_HAND_H 96
+#define INK_THUMB_MAX_W 320     /* thumbnail pool slots also hold handwriting from the PC (POST /ink), which may be bigger */
+#define INK_THUMB_MAX_H 160
 
-/* One sentence as a wide 8-bit grey PNG, black strokes on white, height INK_PNG_CELL, one cell per character
- * (the committed ones). *png is malloc'd. Returns false when there is nothing or no memory. */
+/* One sentence as an 8-bit grey PNG, black strokes on white, one INK_PNG_CELL square per character (the committed
+ * ones), INK_PNG_PER_ROW to a row and further rows below (so a short sentence is one wide strip, a long one a block).
+ * *png is malloc'd. Returns false when there is nothing or no memory. */
 bool ink_make_png(const ink_t *k, uint8_t **png, size_t *len, int *w, int *h);
 
-/* The same sentence small, as an 8-bit coverage mask (255 = ink), INK_THUMB_PER_ROW characters per row, rows
- * as needed (max 3). mask must hold INK_THUMB_MAX_W * INK_THUMB_MAX_H bytes; the used size is *w x *h (tightly packed). */
+/* The same sentence small, as an 8-bit coverage mask (255 = ink), as many characters per row as fit the box. mask must
+ * hold INK_HAND_W * INK_HAND_H bytes; the used size is *w x *h (tightly packed). */
 bool ink_make_thumb(const ink_t *k, uint8_t *mask, int *w, int *h);
 
 /* Wrap 8-bit grey pixels in a PNG using stored (uncompressed) deflate blocks. *out is malloc'd. */
