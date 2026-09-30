@@ -25,6 +25,8 @@
 
 | v6.4 | `release/ke-body-v6.4.bin`（合并）<br>`release/ke-body-app-v6.4.bin`（**只含应用，推荐**） | 修上下边缘点不动（按钮上不再判拖动、手指滚动/首点偏一格也算点击、控制器把一次触摸拆成两次不再重复触发）；`touchlog` 每次松手打印为什么算/不算；手写气泡改成粉色气泡上直接画白字；底栏图标加实心圆底；顶栏小脸更大更清楚；粉色 `#F2708F` | 编译通过、主机测试通过，**未上板** |
 
+| v8 | `release/ke-body-v8.bin`（合并）<br>`release/ke-body-app-v8.bin`（**只含应用，推荐**） | 第八期：手写 40 字 + 克也能发手写（`POST /ink`）；克发图片（`POST /image`）+ 全屏看图 + 相册看 SD 卡里的图；音乐播放器（SD 卡 MP3 / 电脑推送 `POST /music`）；麦克风增益 + 录音自动增益 + 音量条；三个小游戏 | 编译通过、主机测试通过，**未上板** |
+
 > 本固件在没有实物的环境里编写和编译。§6「未验证事项」列出了需要上板确认的点，请按顺序核对。
 
 ---
@@ -153,6 +155,26 @@
 | 68 | 「+」和相机图标 | 图标下面加实心圆底（和顶栏同色），压在气泡上也清楚，不再像错位的十字 |
 | 69 | 顶栏小脸 | 小圆 36→**40 px**；圆里只放眼睛和嘴（第一个 `(` 到最后一个 `)` 之间，不带括号和 ♡ 等），再按宽度缩小 |
 | 70 | 粉色 | `#F2708F`（比 `#F0609E` 偏橙一点），以实机看起来为准，不对就改 `main/ui_colors.h` 里两个 `COL_*_HER_BUBBLE` |
+
+### 第八期
+
+| # | 内容 | 说明 |
+|---|------|------|
+| 71 | 手写最多 40 字 | 预览条可以左右拖动（往右拖看更早的字，两头有小点提示）；「下一个」后回到最新。寄出的 PNG 一行 16 个字，超过自动换行成多行（40 字 = 1536×288，三行）；聊天里的缩略图按字数自动缩小（32/24/20/16 px 一格，最多 72 字放得下） |
+| 72 | 克发手写：`POST /ink` | body 是 PNG（`ke_send.py ink 文件.png`）。板子自带 PNG 解码器（各种颜色类型/位深/滤波，不支持隔行扫描），不管你发黑字白底、白字黑底还是透明底，都转成**白色笔迹**画在聊天页克那一侧的黑气泡里；会像克的文字一样让脸变 `(—o—)`、提示。图会缩到气泡能放下的大小（竖屏约 200×150），**很长的一条横带会被缩得看不清，请电脑端自己排成多行再发** |
+| 73 | 看图：`POST /image` | JPEG 或 PNG（`ke_send.py image 文件`，装了 Pillow 会自动缩到不超过 480×480 并转 JPEG；没装 Pillow 只能发已经小于屏幕的图）。显示在克那一侧的缩略图气泡里（≤200×150），**点一下全屏看，再点返回**。最近 3 张存在内存里（更早的气泡点了提示"这张图已经不在了"），有 SD 卡时原图同时存到 `/sdcard/FROMKE/日期时间.jpg/png`。只支持基线 JPEG，渐进式 JPEG 会被拒绝（返回 400） |
+| 74 | 相册看 SD 卡里的图 | 相册页现在按顺序翻：自己拍的照片（先从最新一张开始）→ SD 卡根目录的 JPEG/PNG（她自己拷进去的）→ `/sdcard/FROMKE/`（克发来的原图）。卡里自己拷的图**只能看不能删**；PNG 不能"寄给克"（只寄 JPEG）；大图（几十兆）读入 PSRAM 后 1/8 缩小解码，要等几秒 |
+| 75 | 音乐播放器 | 「+」面板里加了「音乐」胶囊。播放页：封面（圆盘里一个粉色音符，播放时有粉色圆环）、歌名、进度条和时间、上一首/播放暂停/下一首、音量滑条（手指拖）、右上「列表」。列表页可上下拖动，点一行播放。播完自动下一首，最后一首放完停止。界面跟主题。播放时脸页的脸是 `(—ω—)♪`，停下恢复；扣桌、锁屏（睡脸）时声音继续 |
+| 76 | 歌从哪来 | ① SD 卡 `/sdcard/MUSIC/*.mp3`（文件名就是歌名，最多 100 首，UTF-8 中文名可以，`music rescan` 重新扫）；② 电脑推：`ke_send.py music 文件.mp3 [歌名]`（`POST /music`，头 `X-Title` 是百分号编码的歌名）：**有 SD 卡就存进 MUSIC 文件夹**（边收边写，不占内存），**没卡就放 PSRAM（一首一首，最大 5 MB，新的替换旧的）**；收完自动开始放，出现在列表最上面，聊天里克那一侧出一条 `♪ 歌名`（不用 🎵：字库里没有这个彩色 emoji，用的是 `♪`） |
+| 77 | 解码方式 | 用 minimp3（CC0，`main/minimp3.h`，`main/minimp3.LICENSE`），在音频任务里逐帧解码（任务栈 20 KB），16 KB 缓冲从 SD 卡/内存读。支持 MPEG-1/2/2.5 Layer 3、任意码率、单/双声道、ID3v2 头自动跳过；44.1k/48k 等采样率会切换 I2S 时钟。按住说话录音、`/play` 会**打断**音乐（录完不会自动接着放）；收到消息的提示音（`chime on`）在放歌时不响，免得把歌切断 |
+| 78 | 麦克风增益 | `mic gain <0-60>`（dB，存 NVS）/ `POST /mic`（body 是数字）/ `ke_send.py mic 42`。0–42 dB 用 ES8311 的模拟 PGA（每 6 dB 一档），超过 42 dB 的部分用 ADC 数字音量（0.5 dB 一步）补。**默认 36 dB**（原 30） |
+| 79 | 录音自动增益 | 录音结束、发送之前做一次归一化：最大样本拉到满量程的 0.8，**放大不超过 25 倍（28 dB），不会把大声的录音调小**，接近静音（峰值 <60）不放大免得放大噪声。串口日志有 `recording normalised, gain x7.3` |
+| 80 | 录音音量条 | 录音时屏幕最上边缘有一条粉色细线，从中间向两边伸缩，随音量跳（每秒 20 次，对数刻度 −50 dB…0 dB，上升立刻、下降平滑），所有页面都有 |
+| 81 | 小游戏 | 「+」面板里「游戏」胶囊 → 游戏列表（每项显示最好成绩）。界面跟随主题，粉/黑配色，螃蟹是矢量画的。每个游戏右上「重来」，左上返回列表；顶部小字是克现在的脸。成绩存 NVS（`g_mem` `g_2048` `g_bub`），破纪录时克的脸变 `(—∀—)` 三秒半 |
+| 82 | 翻牌配对 | 12 张牌（横屏 4×3、竖屏 3×4），背面是小螃蟹，正面 6 对表情 `(—ω—) (—//—) (—▽—)♡ (—ε—) V(—ω—)V (=ω=)`。记步数（翻一对算一步）和用时（从第一下点开始）；翻错的一对亮 0.75 秒再翻回去，这期间的点击忽略；配对成功的牌变粉色。最好成绩 = 步数少，同步数用时短 |
+| 83 | 2048 | 4×4，上下左右滑（≥24 px）。**偏心她**：新方块出 4 的概率 20%（标准 10%）；**卡死前自动撤销一步**：一步走完发现再也没有能走的了，这一步自动收回来（下面出粉色小条"克帮你撤销了一步"），每局一次，第二次才真的结束。方块颜色从黑到粉渐变（2 最黑、2048 最粉，再往上向白色过渡）。得分 = 合并得分之和，最高分存 NVS |
+| 84 | 戳泡泡 | 30 秒一局。泡泡从下往上飘（半径 20–36，越到后面越快，左右轻轻摇），**手指落下的瞬间**戳中就破（手指外 10 px 内也算），得 1 分；每 9 个里大约 1 个是带小螃蟹的泡泡，戳到得 5 分并让克脸红一下（`ui_blush`）。时间条在标题栏下沿 |
+| 85 | 成绩发给克 | 每局结束用 `/msg` 发一行到电脑（不进聊天记录），例如 `[游戏] 翻牌 18 步 42 秒`、`[游戏] 2048 得分 3120，最大方块 256`、`[游戏] 戳泡泡 27 分（戳到螃蟹 2 次）`，破纪录时后面加 `（新纪录！）`。半路退出的局不发 |
 ---
 
 ## 2. 烧录（Windows）
@@ -225,6 +247,8 @@ python -m esptool --chip esp32s3 --port COM3 write-flash 0x10000 release/ke-body
 | `cam on|off|shot|gallery|status` | 进/出相机、拍一张、进相册、打印相机设置 |
 | `cam xclk <MHz>` / `cam quality <n>` / `cam awb on|off` / `cam wb <auto\|sunny\|cloudy\|office\|home>` / `cam rot <0\|90\|180\|270>` | 相机画质调节，全部存 NVS，对比着试（见 §3.7） |
 | `touchrange [reset]` / `touchcal [xmin xmax ymin ymax \| reset]` | 原始触摸范围诊断 / 拉伸校准（见 v6.3） |
+| `mic [gain <0-60>]` | 麦克风增益（dB），存 NVS，默认 36 |
+| `music [list\|play <n>\|pause\|next\|prev\|stop\|rescan]` | 音乐播放器控制 / 列出歌 / 重新扫 SD 卡 |
 | `theme light\|dark\|auto` | 主题（默认 auto，夜间时段自动暗色），存 NVS |
 | `color` / `color <gamma%> <r%> <g%> <b%>` / `color reset` / `colortest` | 屏幕颜色校准、色块对照屏（见 §3.6） |
 | `cam vflip on|off` / `cam mirror on|off` | 画面上下翻/左右镜像，存 NVS（默认 vflip on，同官方例子） |
@@ -252,6 +276,10 @@ curl -X POST -H "Content-Type: application/json" --data-binary @buttons.json htt
         # {"text":["想你了","抱抱","在干嘛","晚安"],"emoji":["(´ω`)","(≧▽≦)","♡","💧"],"shake":"想你了"}
         # 快捷语最多 8 个（每个 12 字以内）、表情最多 30 个（每个 20 字以内），整体 <2KB；也可以只给一个数组（=快捷语）。GET /buttons 看当前值
 curl -X POST --data-binary "reset" http://192.168.1.23/buttons           # 恢复内置默认按钮
+curl -X POST -H "Content-Type: image/png"  --data-binary @note.png http://192.168.1.23/ink      # 克的手写（PNG，任意颜色，显示成白字）
+curl -X POST -H "Content-Type: image/jpeg" --data-binary @photo.jpg http://192.168.1.23/image   # 克发图片（JPEG/PNG，≤3 MB，最好先缩到 480×480 以内）
+curl -X POST -H "X-Title: %E5%A4%9C%E6%9B%B2" --data-binary @song.mp3 http://192.168.1.23/music # 推一首歌（X-Title = 百分号编码的歌名）
+curl -X POST --data-binary "42" http://192.168.1.23/mic                                          # 麦克风增益 dB（0-60）
 curl -X POST --data-binary "off"   http://192.168.1.23/anim              # 全部动画 on/off
 curl -X POST --data-binary "blink on"  http://192.168.1.23/anim          # 单项：blink blush zzz shake flash
 curl -X POST --data-binary "status"    http://192.168.1.23/anim          # 看各项开关
@@ -296,6 +324,10 @@ python pc/ke_send.py brightness 40
 python pc/ke_send.py theme dark
 python pc/ke_send.py heard "我想你"        # 语音转文字的结果送回板子，显示在她那一侧
 python pc/ke_send.py buttons buttons.json # 按钮配置（文件或 JSON 字符串）
+python pc/ke_send.py ink note.png          # 克的手写
+python pc/ke_send.py image photo.jpg       # 克发图片（装了 Pillow 会自动缩放成 JPEG）
+python pc/ke_send.py music song.mp3 夜曲   # 推一首歌，立刻开始放
+python pc/ke_send.py mic 42                # 麦克风增益 dB
 python pc/ke_send.py anim off              # 全部动画
 python pc/ke_send.py anim blink on         # 单项：blink blush zzz shake flash
 python pc/ke_send.py anim status
@@ -431,7 +463,13 @@ main/
   ui_colors.h     所有界面颜色宏（COL_D_* 暗色、COL_L_* 亮色）
   colorcal.c/.h   可选的屏幕颜色校准（gamma + 三通道增益，纯 C）
   imgrot.c/.h     相机图像旋转 + 字节交换（纯 C）
-  ink.c/.h        手写：笔画存储/撤销/平滑、拼成一张横向 PNG、聊天缩略图（纯 C）
+  ink.c/.h        手写：笔画存储/撤销/平滑、拼成 PNG（多行）、聊天缩略图（纯 C）
+  png.c/.h        PNG 解码（自带 inflate；缩小到指定框，输出 RGB565 或"墨迹遮罩"）（纯 C）
+  pics.c/.h       克发来的图片池（3 张）+ RGB565 缩放（纯 C）；imgdec.c 按文件头选 JPEG/PNG 解码；picview.c 全屏看图
+  mp3src.c/.h     流式 MP3 解码封装（minimp3，纯 C）；music.c 播放列表、SD 卡 / 内存来源、推送接收
+  agc.c/.h        录音自动增益、音量条刻度（纯 C）
+  games.c/.h      三个小游戏的规则（纯 C，不含绘图）
+  minimp3.h       minimp3（Lieff，CC0），见 minimp3.LICENSE
   gfx.c/.h        小型软件渲染器
   kb_font.h / fonts/   位图字体
   wifi_mgr.c/.h   NVS 凭据 + STA 连接 + 自动重连
@@ -443,7 +481,7 @@ components/es8311/           官方 Arduino 库里的 Espressif es8311 驱动（
 components/XPowersLib/       官方例子用的 AXP2101 驱动（MIT）
 components/esp32-camera/     Espressif 摄像头驱动 2.0.15（官方仓库里的那份）
 pc/ke_bridge.py              电脑端：收录音 /hear、文字 /msg、照片 /photo，存 pc/inbox/
-pc/ke_send.py                电脑端：给板子发 face / say / heard / play / volume / rotate / brightness / theme / buttons / anim / chime / peek / snap / ping
+pc/ke_send.py                电脑端：给板子发 face / say / heard / play / volume / rotate / brightness / theme / mic / ink / image / music / buttons / anim / chime / peek / snap / ping
 tools/gen_fonts.py           字体生成脚本
 tools/host_preview.c         电脑上渲染画面到 PPM（支持横竖屏、深浅色）
 tools/run_host_tests.sh      主机端测试（行编辑器、触摸状态机）；tools/test_*.c，tools/hoststubs/ 是 IDF 头文件的桩
@@ -462,6 +500,8 @@ release/ke-body-app-vX.bin   只含应用（0x10000，第四期起）
 | small14 | 14 | ASCII + 扫描 `main/*.c` 得到的所有界面用汉字 | 文泉驿正黑 |
 
 位图总计约 2.4MB，全部放在 Flash，不占 RAM。字库里没有的字画一个空心方框。💢（U+1F4A2）和 💧（U+1F4A7）是彩色 emoji，没有单色字体，`gen_fonts.py` 里的 `render_icon()` 用线条画成和表情同高的位图，当作普通字形放进 face 字体和气泡字体，颜色跟随主题。要加别的 emoji 图标就在 `ICON_CODEPOINTS` 里加一项并写画法。脸页颜文字先试 96px，再依次降到 64/44/30px，再放不下折两行；聊天小脸和表情格用 30/18/13px。**新加界面文字后要重新跑 `gen_fonts.py`**，否则小字显示成方框（small14 会自动扫描源码里的汉字）。横屏时脸的可用宽度是 456px，长颜文字更容易保持 64px。
+
+第三方代码：minimp3（Lieff，CC0 公有领域，`main/minimp3.h`）用于 MP3 解码；PNG 解码（`main/png.c`）里的 inflate 是按 Mark Adler 的 puff 思路重写的。
 
 字体版权：DejaVu（自由字体许可）、文泉驿正黑（GPLv2 + 字体嵌入例外）、GNU Unifont（GPLv2+ 字体例外 / OFL）。
 
@@ -485,6 +525,8 @@ tools/run_host_tests.sh [/path/to/esp-idf]
 ```
 
 - `tools/test_colors.c`：`ui_colors.h` 里的颜色打进帧缓冲后是不是预期的 RGB565、字节序对不对、`GFX_GREY` 是否保持中性、颜色校准。
+- `tools/test_png.c`（配 `tools/make_test_pngs.py` 生成 17 个固定样张：真 zlib 动态 Huffman、5 种行滤波、所有颜色类型/位深、透明色板、16 位）、`tools/test_pics.c`、`tools/test_mp3.c`（用 minimp3 自带的一致性测试向量 `tools/testdata/`）、`tools/test_agc.c`、`tools/test_games.c`（翻牌洗牌/配对规则、2048 合并/滑动/自动撤销一次、泡泡命中）。
+- `tools/test_ui_touch.c` 新增：40 字手写与条带拖动、克的手写/图片气泡、点图全屏/点一下返回、音乐播放器各按钮/音量拖动/列表滚动、游戏三个页面的操作和成绩上报。
 - `tools/test_ink.c`：手写笔画编辑（撤销/清空/下一个/上限）、平滑连续、PNG 头和拼接尺寸、缩略图换行；`INK_PNG_OUT=x.png` 可以把生成的 PNG 存出来看。
 - `tools/test_imgrot.c`：相机图像 90/180/270 度旋转方向和字节交换。
 - `tools/test_lineedit.c`：串口行编辑器（中文/emoji 原样通过、退格删整字、历史、Ctrl-C/U、CRLF、超长）。
@@ -510,6 +552,17 @@ v3.3：横屏 270、黑底、亮度、夜间变暗、喇叭（TCA9554 P7 使能�
 3. **聊天上下滑方向反了**（自查发现，你还没碰到）：v4 往下拖是更靠近最新，与手机相反。现在手指往下拖 = 看更早的消息，往上拖回最新；新消息来了自动回到底部。
 4. **串口中文**：见 §3.1。IDF linenoise 的 `sanitize()` 用 `isprint()` 把 ≥0x80 的字节全删，不是终端 GBK 的问题；自带行编辑器已经替换。上板后 `msg 想你了` 应该能进聊天并发到 bridge。
 5. 串口现在跑在我们自己的任务里（栈 8KB，`cam on` 之类耗栈的命令也在这个任务里跑）。和之前相比只少了 Tab 补全，其它命令不变。
+
+### 第八期 v8（全部未上板）
+
+只在电脑上验证过：编译通过（应用约 3.9 MB，6 MB 分区还剩约 37%）、分区表和 bootloader 与 v4.1 逐字节相同（**app-only 可直接刷**）、主机测试通过（PNG 解码用真 zlib 样张、MP3 用 minimp3 官方测试向量、游戏规则、界面操作）。**上板后请确认**：
+
+1. **音乐**（最重要的未验证项）：① ES8311 在 44.1/48 kHz 下的时钟系数——录音/播放原来只用过 16/24 kHz，44.1k 是否出声、有没有变调，需要听；② MP3 解码占用 CPU 是否影响 Wi-Fi/界面（解码在核 0 的音频任务，优先级低于 Wi-Fi），SD 卡读盘是否偶尔卡顿；③ 中文文件名靠 `CONFIG_FATFS_API_ENCODING_UTF_8`（已写进 `sdkconfig.defaults`，**自己编译要先删旧的 `sdkconfig`**），卡要是 FAT32；④ 没有 SD 卡时推的歌放 PSRAM（≤5 MB），和相机同时用可能内存紧张。
+2. **克发图片/手写**：`ke_send.py` 用的是标准库，没有 Pillow 就不能缩图；很长的手写横带在气泡里会被缩得很小。渐进式 JPEG、隔行 PNG 不支持。大图（>3 MB）会被拒绝。
+3. **相册翻 SD 卡的图**：大 JPEG 要读进内存再 1/8 缩小解码，可能要等几秒，且期间触摸任务被占用。
+4. **录音**：`mic gain` 默认 36 dB + 自动增益是否让她轻声说话的听写好转；音量条的灵敏度（−50 dB…0 dB）需要看手感。放歌时按住说话会打断歌。
+5. **手写页/游戏的帧率**：戳泡泡是 50 ms 一帧的整屏重画，估计 10–15 fps；泡泡本身按时间移动，掉帧只是不够顺。
+6. **小游戏**：手指落下的瞬间戳泡泡，FT6336 30 ms 一次采样，可能漏掉很快的点；卡片/按钮命中区已按 v6.4 的规则放宽。
 
 ### v6.4（全部未上板）
 

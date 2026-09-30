@@ -36,9 +36,10 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: %s out.ppm [options]\n", argv[0]); return 1; }
     bool land = true, few = false, thumb_msg = false;
     int ink_chars = 0, songs = 0;
-    bool playing = false;
+    bool playing = false, gover = false;
     ui_state_t *s = calloc(1, sizeof(ui_state_t));
     s->pressed = UI_HIT_NONE;
+    s->mic_level = -1;
     s->theme = UI_THEME_DARK;
     s->screen = UI_SCREEN_FACE;
     s->line_alpha = 255;
@@ -53,7 +54,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--light")) s->theme = UI_THEME_LIGHT;
         else if (!strcmp(a, "--page")) {
             const char *v = ARG;
-            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : !strcmp(v, "ink") ? UI_SCREEN_INK : !strcmp(v, "music") ? UI_SCREEN_MUSIC : !strcmp(v, "musiclist") ? UI_SCREEN_MUSIC_LIST : UI_SCREEN_FACE;
+            s->screen = !strcmp(v, "chat") ? UI_SCREEN_CHAT : !strcmp(v, "camera") ? UI_SCREEN_CAMERA : !strcmp(v, "gallery") ? UI_SCREEN_GALLERY : !strcmp(v, "colortest") ? UI_SCREEN_COLORTEST : !strcmp(v, "ink") ? UI_SCREEN_INK : !strcmp(v, "music") ? UI_SCREEN_MUSIC : !strcmp(v, "musiclist") ? UI_SCREEN_MUSIC_LIST : !strcmp(v, "games") ? UI_SCREEN_GAMES : !strcmp(v, "memory") ? UI_SCREEN_GAME_MEMORY : !strcmp(v, "g2048") ? UI_SCREEN_GAME_2048 : !strcmp(v, "bubbles") ? UI_SCREEN_GAME_BUBBLES : UI_SCREEN_FACE;
         }
         else if (!strcmp(a, "--slide")) s->page_pos = atoi(ARG);
         else if (!strcmp(a, "--panel")) { s->panel_pos = atoi(ARG); s->panel_open = s->panel_pos > 0; }
@@ -74,6 +75,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--sending")) s->sending = true;
         else if (!strcmp(a, "--songs")) songs = atoi(ARG);
         else if (!strcmp(a, "--playing")) playing = true;
+        else if (!strcmp(a, "--gover")) gover = true;
         else if (!strcmp(a, "--ink")) ink_chars = atoi(ARG);
         else if (!strcmp(a, "--thumb")) thumb_msg = true;
         else if (!strcmp(a, "--review")) s->review = true;
@@ -140,6 +142,19 @@ int main(int argc, char **argv)
     s->music.elapsed_s = 83; s->music.total_s = 226; s->music.progress_pm = 366; s->music.volume = 18;
     snprintf(s->music.title, sizeof s->music.title, "%s", names[0]);
     s->music_names = names;
+    static games_view_t gv;
+    gv.best_mem_moves = 14; gv.best_mem_secs = 38; gv.best_2048 = 2312; gv.best_bub = 31;
+    memory_new(&gv.mem, 5);
+    memory_tap(&gv.mem, 0); for (int i = 1; i < MEM_CARDS; i++) if (gv.mem.kind[i] == gv.mem.kind[0]) { memory_tap(&gv.mem, i); break; }
+    memory_tap(&gv.mem, 4); memory_tap(&gv.mem, 5); gv.mem.elapsed_ms = 27000; gv.mem.hide_ms = 0;
+    g2048_new(&gv.g2048, 9);
+    { static const int b[4][4] = { {2,4,8,16}, {0,2,64,32}, {4,128,256,8}, {2,512,1024,2048} }; memcpy(gv.g2048.cell, b, sizeof b); gv.g2048.score = 3120; }
+    bubbles_new(&gv.bub, s->screen == UI_SCREEN_GAME_BUBBLES ? (land ? 480 : 320) : 480, land ? 268 : 428, 3);
+    for (int i = 0; i < 60; i++) bubbles_tick(&gv.bub, 50);
+    gv.bub.b[1].crab = true; gv.bub.score = 12;
+    if (gover) { gv.mem.won = true; gv.g2048.over = true; gv.bub.over = true; gv.bub.time_left_ms = 0; gv.record = true; }
+    snprintf(gv.note, sizeof gv.note, "克帮你撤销了一步");
+    s->games = &gv;
     ui_render(s);
 
     FILE *o = fopen(argv[1], "wb");

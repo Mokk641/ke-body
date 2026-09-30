@@ -246,6 +246,12 @@ void app_on_touch_activity(void)
     }
 }
 
+void app_game_result(const char *line)
+{
+    ESP_LOGI(TAG, "%s", line);
+    bridge_send_text(line);
+}
+
 void app_set_volume(int percent)
 {
     audio_set_volume(percent);

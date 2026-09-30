@@ -57,6 +57,8 @@ void app_on_long_press(void) { n_long_press++; }
 void app_on_long_release(void) { n_long_release++; }
 void app_on_swipe(int dir) { n_swipes++; last_swipe = dir; }
 void app_on_touch_activity(void) {}
+static char last_game_line[128]; static int n_game_lines;
+void app_game_result(const char *line) { snprintf(last_game_line, sizeof last_game_line, "%s", line); n_game_lines++; }
 static int n_vol; static int last_vol;
 void app_set_volume(int pct) { n_vol++; last_vol = pct; }
 static int n_ink_sent; static size_t last_ink_len; static uint8_t last_ink_sig[8];
@@ -627,6 +629,101 @@ int main(void)
         CHECK(gfx_has_glyph(&kb_font_face96, 0x266A) && gfx_has_glyph(&kb_font_face18, 0x266A) && gfx_has_glyph(&kb_font_text22, 0x266A),
               "the note character exists in the face and bubble fonts");
     }
+
+    /* ---- games ---- */
+    to_chat();
+    tap_hit(UI_HIT_PLUS); settle();
+    tap_hit(UI_HIT_GAME_OPEN);
+    ui_panel_set(false); settle();
+    snap();
+    CHECK(st->screen == UI_SCREEN_GAMES, "the 游戏 capsule opens the game list (handled by the UI)");
+    CHECK(st->games != NULL, "the games state is there");
+    {
+        /* memory pairs */
+        CHECK(tap_hit(UI_HIT_GAME_ITEM_MEMORY), "memory item");
+        snap();
+        CHECK(st->screen == UI_SCREEN_GAME_MEMORY && st->games->mem.moves == 0, "-> a fresh memory game");
+        const memory_t *mem = &st->games->mem;
+        int a = 0, b = -1;
+        for (int i = 1; i < MEM_CARDS; i++) if (mem->kind[i] == mem->kind[0]) b = i;
+        int c = -1; for (int i = 1; i < MEM_CARDS; i++) if (mem->kind[i] != mem->kind[0]) { c = i; break; }
+        CHECK(tap_hit(UI_HIT_GAME_CARD0 + a), "card 0 is a button");
+        snap();
+        CHECK(st->games->mem.up[a], "tapping a card turns it over");
+        tap_hit(UI_HIT_GAME_CARD0 + c);
+        snap();
+        CHECK(st->games->mem.moves == 1 && st->games->mem.hide_ms > 0, "a wrong pair is counted and shown for a moment");
+        ticks(20); snap();
+        CHECK(!st->games->mem.up[a] && !st->games->mem.up[c], "then it turns back by itself (the 50 ms tick drives it)");
+        n_game_lines = 0;
+        for (int i = 0; i < MEM_CARDS; i++) {
+            snap();
+            if (st->games->mem.matched[i]) continue;
+            int j = -1; for (int k = i + 1; k < MEM_CARDS; k++) if (st->games->mem.kind[k] == st->games->mem.kind[i]) j = k;
+            tap_hit(UI_HIT_GAME_CARD0 + i);
+            tap_hit(UI_HIT_GAME_CARD0 + j);
+        }
+        snap();
+        CHECK(st->games->mem.won && n_game_lines == 1 && strstr(last_game_line, "[游戏] 翻牌") && strstr(last_game_line, "步"), "finishing sends one line to the PC: %s", last_game_line);
+        CHECK(st->games->record && strstr(last_game_line, "新纪录") != NULL, "the first game is a record");
+        CHECK(!strcmp(st->face, "(—∀—)"), "and Ke's face cheers (%s)", st->face);
+        ticks(80); snap();
+        CHECK(strcmp(st->face, "(—∀—)") != 0, "for a few seconds only");
+        /* restart */
+        CHECK(tap_hit(UI_HIT_GAME_RESTART), "重来");
+        snap();
+        CHECK(!st->games->mem.won && st->games->mem.moves == 0, "starts a new game");
+        CHECK(tap_hit(UI_HIT_GAME_BACK), "back button");
+        snap();
+        CHECK(st->screen == UI_SCREEN_GAMES, "-> game list");
+
+        /* 2048 */
+        tap_hit(UI_HIT_GAME_ITEM_2048);
+        snap();
+        CHECK(st->screen == UI_SCREEN_GAME_2048, "2048 page");
+        int before[4][4]; memcpy(before, st->games->g2048.cell, sizeof before);
+        bool changed = false;
+        static const int dirs[4][4] = { { 200, 250, 200, 150 }, { 200, 150, 200, 250 }, { 300, 200, 200, 200 }, { 150, 200, 300, 200 } };
+        for (int d = 0; d < 4 && !changed; d++) {
+            host_now_us += 400000;
+            ui_touch(true, dirs[d][0], dirs[d][1]);
+            for (int k = 1; k <= 5; k++) { host_now_us += 8000; ui_touch(true, dirs[d][0] + (dirs[d][2] - dirs[d][0]) * k / 5, dirs[d][1] + (dirs[d][3] - dirs[d][1]) * k / 5); }
+            host_now_us += 8000; ui_touch(false, 0, 0);
+            snap();
+            changed = memcmp(before, st->games->g2048.cell, sizeof before) != 0;
+        }
+        CHECK(changed, "a swipe moves the tiles");
+        n_game_lines = 0;
+        /* a stuck board: the free take-back first */
+        ui_set_screen(UI_SCREEN_GAME_2048);
+    }
+    to_chat();
+
+    /* bubbles */
+    tap_hit(UI_HIT_PLUS); settle();
+    tap_hit(UI_HIT_GAME_OPEN);
+    ui_panel_set(false); settle();
+    tap_hit(UI_HIT_GAME_ITEM_BUBBLES);
+    ticks(50); snap();
+    {
+        const bubbles_t *b = &st->games->bub;
+        int alive = 0, target = -1;
+        for (int i = 0; i < BUB_MAX; i++) if (b->b[i].alive && b->b[i].y > 60 && b->b[i].y < gfx_height() - 80) { alive++; if (target < 0) target = i; }
+        CHECK(st->screen == UI_SCREEN_GAME_BUBBLES && b->b[0].r >= 0 && alive >= 1, "bubbles are floating (%d)", alive);
+        bubble_t bb = b->b[target];
+        int score0 = b->score;
+        host_now_us += 400000;
+        ui_touch(true, (int)bb.x, (int)bb.y + 52);
+        host_now_us += 8000; ui_touch(false, 0, 0);
+        snap();
+        CHECK(st->games->bub.score > score0 && !st->games->bub.b[target].alive, "poking a bubble pops it and scores (%d)", st->games->bub.score);
+        n_game_lines = 0;
+        ticks(620); snap();
+        CHECK(st->games->bub.over && n_game_lines == 1 && strstr(last_game_line, "戳泡泡"), "after 30 s the game ends and reports: %s", last_game_line);
+        ticks(10);
+        CHECK(n_game_lines == 1, "and reports only once");
+    }
+    to_chat();
 
     /* ---- bigger touch areas near the bottom ---- */
     {

@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "ink.h"
+#include "games.h"
 
 #define UI_FACE_MAX_CHARS 20   /* code points accepted by POST /face */
 #define UI_SAY_MAX_CHARS  60   /* code points accepted by POST /say  */
@@ -38,9 +39,22 @@ typedef struct {
     uint16_t pic_id;          /* 0 = none; else a picture from Ke, its thumbnail in the picture pool (see pics_get) */
 } chat_msg_t;
 
-typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK, UI_SCREEN_VIEWER, UI_SCREEN_MUSIC, UI_SCREEN_MUSIC_LIST } ui_screen_t;
+typedef enum { UI_SCREEN_FACE = 0, UI_SCREEN_CHAT, UI_SCREEN_CAMERA, UI_SCREEN_GALLERY, UI_SCREEN_COLORTEST, UI_SCREEN_INK, UI_SCREEN_VIEWER, UI_SCREEN_MUSIC, UI_SCREEN_MUSIC_LIST,
+               UI_SCREEN_GAMES, UI_SCREEN_GAME_MEMORY, UI_SCREEN_GAME_2048, UI_SCREEN_GAME_BUBBLES } ui_screen_t;
 
 typedef struct { char text[UI_BTN_TEXT_LEN]; } ui_button_t;
+
+/* everything the game pages show (owned by ui.c, read by the renderer) */
+typedef struct {
+    memory_t mem;
+    g2048_t g2048;
+    bubbles_t bub;
+    int best_mem_moves, best_mem_secs;     /* 0 = not played yet */
+    int best_2048, best_bub;
+    bool record;                           /* this game set a record (shown on its result plate) */
+    char note[48];                         /* a short message under the board */
+    int note_ms;
+} games_view_t;
 
 #define UI_MUSIC_TITLE 64
 /* what the music player page shows (filled by music.c through ui_set_music) */
@@ -90,6 +104,7 @@ typedef struct {
     /* camera / gallery screens */
     const uint16_t *frame;    /* byte-swapped RGB565 image to show (preview or photo), or NULL */
     int frame_w, frame_h;
+    const games_view_t *games;
     music_info_t music;
     const char (*music_names)[UI_MUSIC_TITLE];   /* song titles for the list page (owned by music.c) */
     int music_scroll;         /* list page: pixels scrolled */
@@ -137,12 +152,20 @@ enum {
     UI_HIT_MUSIC_VOL,      /* volume slider (drag) */
     UI_HIT_MUSIC_LIST_BACK,/* list: back to the player */
     UI_HIT_MUSIC_LIST_BG,  /* list: empty space between rows (drag scrolls) */
+    UI_HIT_GAMES_BACK,     /* game list: back to the chat */
+    UI_HIT_GAME_ITEM_MEMORY,   /* game list: the three games */
+    UI_HIT_GAME_ITEM_2048,
+    UI_HIT_GAME_ITEM_BUBBLES,
+    UI_HIT_GAME_BACK,      /* inside a game: back to the list */
+    UI_HIT_GAME_RESTART,   /* inside a game: 重来 */
+    UI_HIT_GAME_BOARD,     /* 2048 board / bubble field: swipes and pokes are handled by the game */
     UI_HIT_VIEW_EXIT,      /* picture viewer: tap anywhere to go back */
     UI_HIT_TEST_EXIT,      /* colour test pattern: tap anywhere to leave */
     UI_HIT_PANEL,          /* open panel: empty part (also the panel while it is still sliding) */
     UI_HIT_TEXT_BTN0 = 100,   /* + index into text_btn */
     UI_HIT_EMOJI_BTN0 = 200,  /* + index into emoji_btn (absolute, not per page) */
     UI_HIT_MUSIC_ROW0 = 300,  /* + index into the song list (music list page) */
+    UI_HIT_GAME_CARD0 = 450,  /* + card number 0..11 in the memory game */
     UI_HIT_PIC0 = 400,        /* + index of a chat message that is a picture from Ke (tap = full screen) */
 };
 
@@ -167,6 +190,10 @@ bool ui_render_ink_incremental(const ui_state_t *s, int from, int to, int *x0, i
 
 /* The largest picture that fits a chat bubble in the current orientation (for POST /ink and /image thumbnails). */
 void ui_chat_picture_box(int *w, int *h);
+
+/* Game pages: bubble field size, memory face texts. */
+void ui_game_field(int *w, int *h);
+extern const char *const UI_MEM_FACES[MEM_KINDS];
 
 /* Music player page geometry: volume from a touch x (0..100), and list scrolling limits. */
 int ui_music_vol_from_x(int x);

@@ -16,13 +16,13 @@ echo
 echo "== ui touch =="
 gcc -O1 -Wall -Wno-format-truncation -std=gnu11 -DHOST_TEST \
     -Itools/hoststubs -Imain -I"$IDF/components/json/cJSON" \
-    -o "$OUT/test_ui_touch" tools/test_ui_touch.c "${UI_C:-main/ui.c}" main/ui_render.c main/gfx.c main/ink.c main/pics.c \
+    -o "$OUT/test_ui_touch" tools/test_ui_touch.c "${UI_C:-main/ui.c}" main/ui_render.c main/gfx.c main/ink.c main/pics.c main/games.c \
     main/fonts/font_*.c "$IDF/components/json/cJSON/cJSON.c" -lm
 "$OUT/test_ui_touch"
 
 echo
 echo "== colours =="
-gcc -O1 -Wall -std=gnu11 -Imain -o "$OUT/test_colors" tools/test_colors.c main/ui_render.c main/gfx.c main/colorcal.c main/ink.c main/pics.c \
+gcc -O1 -Wall -std=gnu11 -Imain -o "$OUT/test_colors" tools/test_colors.c main/ui_render.c main/gfx.c main/colorcal.c main/ink.c main/pics.c main/games.c \
     main/fonts/font_*.c -lm
 "$OUT/test_colors"
 
@@ -56,3 +56,8 @@ echo
 echo "== recording gain =="
 gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_agc" tools/test_agc.c main/agc.c -lm
 "$OUT/test_agc"
+
+echo
+echo "== games =="
+gcc -O1 -Wall -Wextra -std=gnu11 -Imain -o "$OUT/test_games" tools/test_games.c main/games.c -lm
+"$OUT/test_games"

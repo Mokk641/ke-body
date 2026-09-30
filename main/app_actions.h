@@ -8,5 +8,6 @@ void app_on_long_press(void);      /* held >= 0.5 s on the face / chat area: sta
 void app_on_long_release(void);    /* released after a long press: stop talking */
 void app_on_swipe(int dir);        /* gallery: +1 next, -1 previous */
 void app_on_touch_activity(void);  /* any touch (wake from sleep etc.) */
+void app_game_result(const char *line);   /* a game finished: "[游戏] 翻牌 18 步 42 秒" goes to the PC (bridge /msg) */
 void app_set_volume(int percent);     /* the music volume slider: 0-100, same scale as `volume` */
 void app_send_ink(const uint8_t *png, size_t len);   /* a handwritten sentence: POST /ink to the bridge (the buffer is copied) */

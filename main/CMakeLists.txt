@@ -21,6 +21,7 @@ idf_component_register(
         "ink.c"
         "png.c"
         "agc.c"
+        "games.c"
         "mp3src.c"
         "music.c"
         "pics.c"

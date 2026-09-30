@@ -1029,6 +1029,223 @@ static void draw_music_list(const palette_t *p, const ui_state_t *s, const geo_t
     gfx_fill_rect(0, LIST_TOP - 1, g->W, 1, p->sep);
 }
 
+/* ---- games ------------------------------------------------------------------------------------------------- */
+
+const char *const UI_MEM_FACES[MEM_KINDS] = { "(—ω—)", "(—//—)", "(—▽—)♡", "(—ε—)", "V(—ω—)V", "(=ω=)" };
+
+#define GAME_HEAD 52          /* header: back, title, 重来 */
+#define GAME_STATS 30         /* one line of numbers under it */
+
+void ui_game_field(int *w, int *h)
+{
+    *w = gfx_width();
+    *h = gfx_height() - GAME_HEAD;
+}
+
+/* a little crab: shell, two claws, eyes on stalks, legs. s = overall width. */
+static void draw_crab(float cx, float cy, float s, uint16_t color, uint16_t hole)
+{
+    float bw = s * 0.62f, bh = s * 0.36f;
+    for (int i = -1; i <= 1; i += 2) {                                        /* legs */
+        for (int k = 0; k < 3; k++) {
+            float y0 = cy + bh * 0.15f + (float)k * s * 0.09f;
+            gfx_line(cx + (float)i * bw * 0.42f, y0, cx + (float)i * (bw * 0.5f + s * 0.16f), y0 + s * 0.13f, s * 0.045f + 0.8f, color);
+        }
+    }
+    gfx_fill_round_rect((int)(cx - bw / 2), (int)(cy - bh / 2), (int)bw, (int)bh, (int)(bh * 0.5f), color);   /* shell */
+    for (int i = -1; i <= 1; i += 2) {
+        gfx_line(cx + (float)i * bw * 0.32f, cy - bh * 0.4f, cx + (float)i * bw * 0.32f, cy - bh * 0.85f, s * 0.05f + 0.8f, color);   /* eye stalk */
+        gfx_fill_circle((int)(cx + (float)i * bw * 0.32f), (int)(cy - bh * 0.95f), (int)(s * 0.07f + 1.f), color);
+        float clx = cx + (float)i * (bw * 0.5f + s * 0.12f), cly = cy - bh * 0.55f;                               /* claw */
+        gfx_line(cx + (float)i * bw * 0.42f, cy - bh * 0.1f, clx, cly, s * 0.05f + 0.8f, color);
+        gfx_fill_circle((int)clx, (int)cly, (int)(s * 0.12f + 1.f), color);
+        gfx_fill_triangle(clx, cly - s * 0.03f, clx + (float)i * s * 0.12f, cly - s * 0.17f, clx + (float)i * s * 0.02f, cly - s * 0.17f, hole);       /* the pincer's gap */
+    }
+    gfx_fill_circle((int)(cx - bw * 0.32f), (int)(cy - bh * 0.95f), (int)(s * 0.035f + 0.5f), hole);
+    gfx_fill_circle((int)(cx + bw * 0.32f), (int)(cy - bh * 0.95f), (int)(s * 0.035f + 0.5f), hole);
+}
+
+static void draw_game_header(const palette_t *p, const ui_state_t *s, const char *title, bool restart, int back_hit)
+{
+    const int W = gfx_width();
+    uint16_t bc = s->pressed == back_hit ? p->icon_pressed : p->icon;
+    gfx_line(26.f, 18.f, 18.f, 26.f, 2.f, bc);
+    gfx_line(18.f, 26.f, 26.f, 34.f, 2.f, bc);
+    gfx_draw_text_centered(&kb_font_text22, W / 2, 26 + kb_font_text22.ascent / 2, title, p->cap_txt);
+    if (restart) {
+        gfx_fill_round_rect(W - 74, 11, 64, 30, 15, s->pressed == UI_HIT_GAME_RESTART ? p->pressed : p->cap);
+        gfx_draw_text_centered(&kb_font_text22, W - 42, 11 + (30 - kb_font_text22.line_height) / 2 + kb_font_text22.ascent, "重来", p->cap_txt);
+    }
+    /* Ke's face, small, next to the title: it cheers when she sets a record */
+    {
+        const char *face = s->face[0] ? s->face : "(—_—)";
+        const kb_font_t *f = &kb_font_face13;
+        int tw = gfx_text_width(&kb_font_text22, title);
+        if (48 + gfx_text_width(f, face) + 6 < W / 2 - tw / 2) gfx_draw_text(f, 48, face_baseline(f, 26), face, p->dim);
+    }
+}
+
+static void draw_result_plate(const palette_t *p, const geo_t *g, const char *l1, const char *l2, bool record)
+{
+    const kb_font_t *f = &kb_font_text22;
+    int w = 240, h = 92;
+    int x = (g->W - w) / 2, y = (g->H - h) / 2;
+    gfx_fill_round_rect(x, y, w, h, 18, p->bar);
+    gfx_draw_round_rect(x, y, w, h, 18, 2, record ? p->her_bub : p->sep);
+    gfx_draw_text_centered(f, g->W / 2, y + 12 + f->ascent, l1, record ? p->her_bub : p->cap_txt);
+    gfx_draw_text_centered(f, g->W / 2, y + 12 + f->line_height + 4 + f->ascent, l2, p->dim);
+}
+
+/* card n of the memory game */
+static void mem_card_rect(const geo_t *g, int n, int *x, int *y, int *w, int *h)
+{
+    const int cols = g->land ? 4 : 3, rows = MEM_CARDS / cols, gap = 8, m = 12;
+    const int top = GAME_HEAD + GAME_STATS + 4, bottom = g->H - m;
+    *w = (g->W - 2 * m - (cols - 1) * gap) / cols;
+    *h = (bottom - top - (rows - 1) * gap) / rows;
+    *x = m + (n % cols) * (*w + gap);
+    *y = top + (n / cols) * (*h + gap);
+}
+
+static void draw_memory(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    const memory_t *m = &s->games->mem;
+    draw_game_header(p, s, "翻牌配对", true, UI_HIT_GAME_BACK);
+    char buf[64];
+    snprintf(buf, sizeof buf, "步数 %d   用时 %d 秒", m->moves, m->elapsed_ms / 1000);
+    gfx_draw_text_centered(&kb_font_text22, g->W / 2, GAME_HEAD + 4 + kb_font_text22.ascent, buf, p->dim);
+    static const kb_font_t *const cands[] = { &kb_font_face44, &kb_font_face30, &kb_font_face18, &kb_font_face13 };
+    for (int i = 0; i < MEM_CARDS; i++) {
+        int x, y, w, h;
+        mem_card_rect(g, i, &x, &y, &w, &h);
+        if (m->matched[i]) {
+            gfx_fill_round_rect(x, y, w, h, 12, p->her_bub);
+            draw_cell_face(cands, 4, 2, UI_MEM_FACES[m->kind[i]], x, y, w, h, p->her_txt);
+        } else if (m->up[i]) {
+            gfx_fill_round_rect(x, y, w, h, 12, p->ke_bub);
+            draw_cell_face(cands, 4, 2, UI_MEM_FACES[m->kind[i]], x, y, w, h, p->ke_txt);
+        } else {
+            gfx_fill_round_rect(x, y, w, h, 12, s->pressed == UI_HIT_GAME_CARD0 + i ? p->pressed : p->cell);
+            float sz = (float)(w < h ? w : h) * 0.62f;
+            draw_crab((float)x + (float)w / 2.f, (float)y + (float)h / 2.f + sz * 0.05f, sz, p->her_bub, p->cell);
+        }
+    }
+    if (m->won) {
+        char l2[64];
+        snprintf(l2, sizeof l2, "%d 步  %d 秒", m->moves, m->elapsed_ms / 1000);
+        draw_result_plate(p, g, s->games->record ? "新纪录！" : "配对成功！", l2, s->games->record);
+    }
+}
+
+static uint16_t tile_color(const palette_t *p, int v)
+{
+    int k = 0;
+    for (int t = v; t > 1; t >>= 1) k++;
+    if (k <= 0) return p->cell;
+    if (k <= 11) return gfx_mix(p->ke_bub, p->her_bub, (k - 1) * 255 / 10);          /* black -> pink */
+    return gfx_mix(p->her_bub, GFX_GREY(0xFF), (k - 11) * 60 > 200 ? 200 : (k - 11) * 60);
+}
+
+static void draw_2048(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    const g2048_t *b = &s->games->g2048;
+    draw_game_header(p, s, "2048", true, UI_HIT_GAME_BACK);
+    char buf[64];
+    snprintf(buf, sizeof buf, "得分 %d   最高 %d", b->score, s->games->best_2048 > b->score ? s->games->best_2048 : b->score);
+    gfx_draw_text_centered(&kb_font_text22, g->W / 2, GAME_HEAD + 4 + kb_font_text22.ascent, buf, p->dim);
+    int avail_h = g->H - (GAME_HEAD + GAME_STATS + 4) - 10;
+    int S = g->W - 24 < avail_h ? g->W - 24 : avail_h;
+    int bx = (g->W - S) / 2, by = GAME_HEAD + GAME_STATS + 4;
+    const int gap = 8, T = (S - 5 * gap) / 4;
+    gfx_fill_round_rect(bx, by, S, S, 14, p->bar);
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) {
+            int x = bx + gap + c * (T + gap), y = by + gap + r * (T + gap);
+            int v = b->cell[r][c];
+            gfx_fill_round_rect(x, y, T, T, 8, tile_color(p, v));
+            if (v) {
+                char num[8];
+                snprintf(num, sizeof num, "%d", v);
+                const kb_font_t *f = &kb_font_text22;
+                gfx_draw_text_centered(f, x + T / 2, y + (T - f->line_height) / 2 + f->ascent, num, GFX_GREY(0xFF));
+            }
+        }
+    if (s->games->note[0]) {
+        const kb_font_t *f = &kb_font_text22;
+        int tw = gfx_text_width(f, s->games->note) + 24;
+        gfx_fill_round_rect((g->W - tw) / 2, by + S + 6, tw, 30, 15, p->her_bub);
+        gfx_draw_text_centered(f, g->W / 2, by + S + 6 + (30 - f->line_height) / 2 + f->ascent, s->games->note, p->her_txt);
+    }
+    if (b->over) {
+        char l2[64];
+        snprintf(l2, sizeof l2, "得分 %d  最大 %d", b->score, b->best_tile);
+        draw_result_plate(p, g, s->games->record ? "新纪录！" : "没有能走的了", l2, s->games->record);
+    }
+}
+
+static void draw_bubbles(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    const bubbles_t *b = &s->games->bub;
+    gfx_set_clip(0, GAME_HEAD, g->W, g->H - GAME_HEAD);
+    for (int i = 0; i < BUB_MAX; i++) {
+        const bubble_t *bb = &b->b[i];
+        int cx = (int)bb->x, cy = (int)bb->y + GAME_HEAD;
+        if (bb->alive) {
+            uint16_t fill = gfx_mix(p->bg, p->her_bub, bb->crab ? 70 : 38);
+            gfx_fill_circle(cx, cy, (int)bb->r, fill);
+            gfx_ring((float)cx, (float)cy, bb->r - 1.f, 2.5f, bb->crab ? p->her_bub : gfx_mix(p->bg, p->her_bub, 150));
+            gfx_fill_circle(cx - (int)(bb->r * 0.4f), cy - (int)(bb->r * 0.4f), (int)(bb->r * 0.13f) + 1, gfx_mix(fill, GFX_GREY(0xFF), 160));   /* highlight */
+            if (bb->crab) draw_crab((float)cx, (float)cy + bb->r * 0.05f, bb->r * 1.3f, p->her_bub, fill);
+        } else if (bb->pop_ms > 0) {                                          /* popped: a ring that widens and fades */
+            float t = 1.f - (float)bb->pop_ms / BUB_POP_MS;
+            gfx_ring((float)cx, (float)cy, bb->r * (1.f + 0.6f * t), 2.5f, gfx_mix(p->her_bub, p->bg, (int)(t * 255)));
+        }
+    }
+    gfx_clear_clip();
+    gfx_fill_rect(0, 0, g->W, GAME_HEAD, p->bg);
+    draw_game_header(p, s, "戳泡泡", true, UI_HIT_GAME_BACK);
+    char buf[64];
+    snprintf(buf, sizeof buf, "%d 分", b->score);
+    gfx_draw_text(&kb_font_text22, g->W - 84 - gfx_text_width(&kb_font_text22, buf), 11 + (30 - kb_font_text22.line_height) / 2 + kb_font_text22.ascent, buf, p->cap_txt);
+    int bar_w = g->W * b->time_left_ms / BUB_GAME_MS;
+    gfx_fill_rect(0, GAME_HEAD - 3, g->W, 3, p->sep);
+    gfx_fill_rect(0, GAME_HEAD - 3, bar_w, 3, p->her_bub);
+    if (b->over) {
+        char l1[32], l2[64];
+        snprintf(l1, sizeof l1, "%s", s->games->record ? "新纪录！" : "时间到！");
+        snprintf(l2, sizeof l2, "%d 分（最高 %d）", b->score, s->games->best_bub > b->score ? s->games->best_bub : b->score);
+        draw_result_plate(p, g, l1, l2, s->games->record);
+    }
+}
+
+static const int GAME_ITEM_H = 78;
+
+static void draw_game_list(const palette_t *p, const ui_state_t *s, const geo_t *g)
+{
+    draw_game_header(p, s, "游戏", false, UI_HIT_GAMES_BACK);
+    const games_view_t *gv = s->games;
+    static const char *const names[3] = { "翻牌配对", "2048", "戳泡泡" };
+    static const int ids[3] = { UI_HIT_GAME_ITEM_MEMORY, UI_HIT_GAME_ITEM_2048, UI_HIT_GAME_ITEM_BUBBLES };
+    for (int i = 0; i < 3; i++) {
+        int y = 68 + i * (GAME_ITEM_H + 12);
+        gfx_fill_round_rect(16, y, g->W - 32, GAME_ITEM_H, 18, s->pressed == ids[i] ? p->pressed : p->cell);
+        gfx_draw_text(&kb_font_text22, 34, y + 14 + kb_font_text22.ascent, names[i], p->cap_txt);
+        char sub[64];
+        if (i == 0) {
+            if (gv && gv->best_mem_moves) snprintf(sub, sizeof sub, "最好 %d 步  %d 秒", gv->best_mem_moves, gv->best_mem_secs);
+            else snprintf(sub, sizeof sub, "12 张牌，找 6 对");
+        } else if (i == 1) {
+            if (gv && gv->best_2048) snprintf(sub, sizeof sub, "最高 %d 分", gv->best_2048);
+            else snprintf(sub, sizeof sub, "上下左右滑");
+        } else {
+            if (gv && gv->best_bub) snprintf(sub, sizeof sub, "最高 %d 分", gv->best_bub);
+            else snprintf(sub, sizeof sub, "30 秒，戳越多越好");
+        }
+        gfx_draw_text(&kb_font_small14, 34, y + 14 + kb_font_text22.line_height + 6 + kb_font_small14.ascent, sub, p->dim);
+        draw_crab((float)(g->W - 60), (float)(y + GAME_ITEM_H / 2 + 2), 44.f, p->her_bub, p->cell);
+    }
+}
+
 /* ---- colour test pattern: swatches with their #RRGGBB, to compare with a phone ----------------------------- */
 
 static void draw_colortest(const ui_state_t *s, const geo_t *g)
@@ -1089,7 +1306,14 @@ void ui_render(const ui_state_t *s)
     gfx_clear_clip();
     gfx_fill(p->bg);
 
-    if (s->screen == UI_SCREEN_MUSIC) {
+    if (s->screen >= UI_SCREEN_GAMES && s->screen <= UI_SCREEN_GAME_BUBBLES && s->games) {
+        switch (s->screen) {
+        case UI_SCREEN_GAMES: draw_game_list(p, s, &g); break;
+        case UI_SCREEN_GAME_MEMORY: draw_memory(p, s, &g); break;
+        case UI_SCREEN_GAME_2048: draw_2048(p, s, &g); break;
+        default: draw_bubbles(p, s, &g); break;
+        }
+    } else if (s->screen == UI_SCREEN_MUSIC) {
         draw_music_player(p, s, &g);
     } else if (s->screen == UI_SCREEN_MUSIC_LIST) {
         draw_music_list(p, s, &g);
@@ -1169,6 +1393,28 @@ int ui_hit_test(const ui_state_t *s, int px, int py)
     if (s->screen == UI_SCREEN_COLORTEST) return UI_HIT_TEST_EXIT;
     if (s->screen == UI_SCREEN_VIEWER) return UI_HIT_VIEW_EXIT;
 
+    if (s->screen == UI_SCREEN_GAMES) {
+        if (py < GAME_HEAD) return px < 60 ? UI_HIT_GAMES_BACK : UI_HIT_NONE;
+        static const int ids[3] = { UI_HIT_GAME_ITEM_MEMORY, UI_HIT_GAME_ITEM_2048, UI_HIT_GAME_ITEM_BUBBLES };
+        for (int i = 0; i < 3; i++) if (in_rect(px, py, 16, 68 + i * (GAME_ITEM_H + 12) - 4, g.W - 32, GAME_ITEM_H + 8)) return ids[i];
+        return UI_HIT_NONE;
+    }
+    if (s->screen >= UI_SCREEN_GAME_MEMORY && s->screen <= UI_SCREEN_GAME_BUBBLES) {
+        if (py < GAME_HEAD) {
+            if (px < 60) return UI_HIT_GAME_BACK;
+            if (px >= g.W - 84) return UI_HIT_GAME_RESTART;
+            return UI_HIT_NONE;
+        }
+        if (s->screen == UI_SCREEN_GAME_MEMORY) {
+            for (int i = 0; i < MEM_CARDS; i++) {
+                int x, y, w, h;
+                mem_card_rect(&g, i, &x, &y, &w, &h);
+                if (in_rect(px, py, x - 4, y - 4, w + 8, h + 8)) return UI_HIT_GAME_CARD0 + i;
+            }
+            return UI_HIT_NONE;
+        }
+        return UI_HIT_GAME_BOARD;
+    }
     if (s->screen == UI_SCREEN_MUSIC) {
         music_geo_t M;
         music_layout(g.W, g.H, &M);

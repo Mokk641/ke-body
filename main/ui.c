@@ -26,6 +26,7 @@ static const char *TAG = "ui";
 #define NOTICE_FACE    "(—o—)"      /* the face flips to this for a second when a message arrives */
 #define KEY_ROTATE     "rotate"
 #define MUSIC_FACE "(—ω—)♪"
+#define PRAISE_FACE "(—∀—)"
 #define KEY_THEME      "theme_mode"   /* light | dark | auto (v6.1: new key, so an old saved "dark" does not stick) */
 #define KEY_BUTTONS    "buttons"
 #define KEY_ANIM       "anim"       /* master switch; per-animation keys are an_<name> */
@@ -121,6 +122,16 @@ static void mark_dirty(void) { __atomic_store_n(&s_full_dirty, 1, __ATOMIC_SEQ_C
 static void mark_ink_dirty(void) { xSemaphoreGive(s_dirty); }      /* only new points: the render task draws just those */
 
 static bool s_music_face;                /* a song is playing: the face hums along */
+static int s_praise_ms;                  /* she set a record: the face cheers */
+
+static void finish_memory(void);
+static void finish_bubbles(void);
+static void games_flush(void);
+static void games_load(void);
+static games_view_t *s_gv;
+static bool s_mem_reported, s_bub_reported;
+static char s_result[128];
+static bool s_result_ready, s_save_records;
 
 static bool an_on(int k) { return s_anim_master && s_an[k]; }
 
@@ -128,7 +139,7 @@ static bool an_on(int k) { return s_anim_master && s_an[k]; }
 static void recompute(void)
 {
     const char *face = s_override_face[0] ? s_override_face
-                     : (s_notice_ms > 0 ? NOTICE_FACE : (s_sleeping ? SLEEP_FACE : (s_music_face ? MUSIC_FACE : s_base_face)));
+                     : (s_notice_ms > 0 ? NOTICE_FACE : (s_praise_ms > 0 ? PRAISE_FACE : (s_sleeping ? SLEEP_FACE : (s_music_face ? MUSIC_FACE : s_base_face))));
     strcpy(s_state->face, face);
     strcpy(s_state->corner, s_override_corner[0] ? s_override_corner : s_base_corner);
     s_state->sleeping = s_sleeping;
@@ -197,6 +208,25 @@ static void tick_cb(void *arg)
         s_theme_tick = 0;
         int t = theme_for_mode();
         if (t != s_state->theme) { s_state->theme = t; redraw = true; }
+    }
+
+    if (s_praise_ms > 0) {
+        s_praise_ms -= TICK_MS;
+        if (s_praise_ms <= 0) { s_praise_ms = 0; recompute(); redraw = true; }
+    }
+    if (s_gv) {                                                           /* the games */
+        if (s_gv->note_ms > 0) { s_gv->note_ms -= TICK_MS; if (s_gv->note_ms <= 0) { s_gv->note[0] = 0; redraw = true; } }
+        if (s_state->screen == UI_SCREEN_GAME_MEMORY) {
+            int sec = s_gv->mem.elapsed_ms / 1000, hide = s_gv->mem.hide_ms;
+            memory_tick(&s_gv->mem, TICK_MS);
+            if (sec != s_gv->mem.elapsed_ms / 1000 || hide > 0) redraw = true;
+            if (s_gv->mem.won && !s_mem_reported) { finish_memory(); redraw = true; }
+        } else if (s_state->screen == UI_SCREEN_GAME_BUBBLES) {
+            bool was_over = s_gv->bub.over;
+            bubbles_tick(&s_gv->bub, TICK_MS);
+            redraw = true;
+            if (s_gv->bub.over && !was_over && !s_bub_reported) finish_bubbles();
+        }
     }
 
     if (s_state->dot_ms > 0) {
@@ -296,6 +326,7 @@ static void tick_cb(void *arg)
 
     unlock();
     if (redraw) mark_dirty();
+    if (s_result_ready || s_save_records) games_flush();
 }
 
 static esp_err_t apply_rotation(int rotation)
@@ -414,6 +445,9 @@ void ui_start(void)
     s_ink = heap_caps_calloc(1, sizeof(ink_t), MALLOC_CAP_SPIRAM);
     s_state->ink = s_ink;
     s_state->mic_level = -1;
+    s_gv = heap_caps_calloc(1, sizeof(games_view_t), MALLOC_CAP_SPIRAM);
+    s_state->games = s_gv;
+    games_load();
     assert(s_fb && s_state && s_snap);
     s_state->pressed = UI_HIT_NONE;
     s_state->screen = UI_SCREEN_FACE;
@@ -946,6 +980,120 @@ static void set_pressed(int id)
 }
 
 /* Taps that only change the UI itself. Returns false if the app has to handle the tap. */
+/* ---- games --------------------------------------------------------------------------------------------- */
+
+
+static uint32_t game_seed(void) { return (uint32_t)esp_timer_get_time() ^ esp_random(); }
+
+/* lock held */
+static void game_note(const char *text, int ms)
+{
+    snprintf(s_gv->note, sizeof s_gv->note, "%s", text);
+    s_gv->note_ms = ms;
+}
+
+/* lock held: a game just ended */
+static void game_finished(bool record, const char *line)
+{
+    s_gv->record = record;
+    snprintf(s_result, sizeof s_result, "%.90s%s", line, record ? "（新纪录！）" : "");
+    s_result_ready = true;
+    if (record) {
+        s_save_records = true;
+        s_praise_ms = 3500;
+        recompute();
+    }
+}
+
+static void finish_memory(void)
+{
+    memory_t *m = &s_gv->mem;
+    int secs = m->elapsed_ms / 1000;
+    bool rec = s_gv->best_mem_moves == 0 || m->moves < s_gv->best_mem_moves || (m->moves == s_gv->best_mem_moves && secs < s_gv->best_mem_secs);
+    if (rec) { s_gv->best_mem_moves = m->moves; s_gv->best_mem_secs = secs; }
+    char line[80];
+    snprintf(line, sizeof line, "[游戏] 翻牌 %d 步 %d 秒", m->moves, secs);
+    game_finished(rec, line);
+    s_mem_reported = true;
+}
+
+static void finish_2048(void)
+{
+    g2048_t *g = &s_gv->g2048;
+    bool rec = g->score > s_gv->best_2048;
+    if (rec) s_gv->best_2048 = g->score;
+    char line[80];
+    snprintf(line, sizeof line, "[游戏] 2048 得分 %d，最大方块 %d", g->score, g->best_tile);
+    game_finished(rec, line);
+}
+
+static void finish_bubbles(void)
+{
+    bubbles_t *b = &s_gv->bub;
+    bool rec = b->score > s_gv->best_bub;
+    if (rec) s_gv->best_bub = b->score;
+    char line[96];
+    snprintf(line, sizeof line, "[游戏] 戳泡泡 %d 分（戳到螃蟹 %d 次）", b->score, b->crabs);
+    game_finished(rec, line);
+    s_bub_reported = true;
+}
+
+/* outside the lock: tell the PC about a finished game and keep the records */
+static void games_flush(void)
+{
+    char line[128];
+    bool send = false, save = false;
+    int bm = 0, bs = 0, b2 = 0, bb = 0;
+    lock();
+    if (s_result_ready) { snprintf(line, sizeof line, "%s", s_result); s_result_ready = false; send = true; }
+    if (s_save_records) { s_save_records = false; save = true; bm = s_gv->best_mem_moves; bs = s_gv->best_mem_secs; b2 = s_gv->best_2048; bb = s_gv->best_bub; }
+    unlock();
+    if (send) app_game_result(line);
+    if (save) {
+        char v[24];
+        snprintf(v, sizeof v, "%d %d", bm, bs); settings_set_str("g_mem", v);
+        snprintf(v, sizeof v, "%d", b2); settings_set_str("g_2048", v);
+        snprintf(v, sizeof v, "%d", bb); settings_set_str("g_bub", v);
+    }
+}
+
+static void games_load(void)
+{
+    char v[24];
+    if (settings_get_str("g_mem", v, sizeof v)) sscanf(v, "%d %d", &s_gv->best_mem_moves, &s_gv->best_mem_secs);
+    if (settings_get_str("g_2048", v, sizeof v)) s_gv->best_2048 = atoi(v);
+    if (settings_get_str("g_bub", v, sizeof v)) s_gv->best_bub = atoi(v);
+}
+
+static void games_start(ui_screen_t which)
+{
+    lock();
+    s_gv->record = false;
+    s_gv->note[0] = 0;
+    s_gv->note_ms = 0;
+    if (which == UI_SCREEN_GAME_MEMORY) { memory_new(&s_gv->mem, game_seed()); s_mem_reported = false; }
+    else if (which == UI_SCREEN_GAME_2048) g2048_new(&s_gv->g2048, game_seed());
+    else if (which == UI_SCREEN_GAME_BUBBLES) {
+        int w, h;
+        ui_game_field(&w, &h);
+        bubbles_new(&s_gv->bub, w, h, game_seed());
+        s_bub_reported = false;
+    }
+    unlock();
+    ui_set_screen(which);
+}
+
+static void game_2048_swipe(int dir)
+{
+    lock();
+    bool moved = g2048_move(&s_gv->g2048, dir);
+    if (moved && s_gv->g2048.undone_now) game_note("克帮你撤销了一步", 3000);
+    if (moved && s_gv->g2048.over) finish_2048();
+    unlock();
+    if (moved) mark_dirty();
+    games_flush();
+}
+
 /* ---- handwriting ------------------------------------------------------------------------------------- */
 
 static bool s_ink_stroke;          /* a finger is drawing on the pad */
@@ -988,8 +1136,25 @@ static void ink_send_now(void)
 
 static bool handle_tap_in_ui(int hit)
 {
+    if (hit >= UI_HIT_GAME_CARD0 && hit < UI_HIT_GAME_CARD0 + MEM_CARDS) {              /* a card of the memory game */
+        lock();
+        mem_event_t ev = s_gv ? memory_tap(&s_gv->mem, hit - UI_HIT_GAME_CARD0) : MEM_NONE;
+        if (ev == MEM_WIN) { s_gv->mem.won = true; finish_memory(); }
+        unlock();
+        if (ev != MEM_NONE) mark_dirty();
+        games_flush();
+        return true;
+    }
     switch (hit) {
     case UI_HIT_VIEW_EXIT: ui_set_screen(UI_SCREEN_CHAT); return true;
+    case UI_HIT_GAME_OPEN: ui_set_screen(UI_SCREEN_GAMES); return true;
+    case UI_HIT_GAMES_BACK: ui_set_screen(UI_SCREEN_CHAT); return true;
+    case UI_HIT_GAME_ITEM_MEMORY: games_start(UI_SCREEN_GAME_MEMORY); return true;
+    case UI_HIT_GAME_ITEM_2048: games_start(UI_SCREEN_GAME_2048); return true;
+    case UI_HIT_GAME_ITEM_BUBBLES: games_start(UI_SCREEN_GAME_BUBBLES); return true;
+    case UI_HIT_GAME_BACK: ui_set_screen(UI_SCREEN_GAMES); return true;
+    case UI_HIT_GAME_RESTART: games_start(ui_get_screen()); return true;
+    case UI_HIT_GAME_BOARD: return true;
     case UI_HIT_MUSIC_BACK: ui_set_screen(UI_SCREEN_CHAT); return true;
     case UI_HIT_MUSIC_LIST: ui_set_screen(UI_SCREEN_MUSIC_LIST); return true;
     case UI_HIT_MUSIC_LIST_BACK: ui_set_screen(UI_SCREEN_MUSIC); return true;
@@ -1026,10 +1191,13 @@ static bool in_chat_area(int hit) { return hit == UI_HIT_CHAT || (hit >= UI_HIT_
 static bool is_pressable(int hit)
 {
     if (hit >= UI_HIT_TEXT_BTN0 && hit < UI_HIT_MUSIC_ROW0) return true;
+    if (hit >= UI_HIT_GAME_CARD0 && hit < UI_HIT_GAME_CARD0 + MEM_CARDS) return true;
     switch (hit) {
     case UI_HIT_CAM_BTN: case UI_HIT_CAM_GALLERY: case UI_HIT_CAM_BACK: case UI_HIT_GAL_DELETE: case UI_HIT_GAL_SEND:
     case UI_HIT_HINT: case UI_HIT_TOP_BACK: case UI_HIT_PLUS:
     case UI_HIT_INK_OPEN: case UI_HIT_INK_BACK: case UI_HIT_INK_NEXT: case UI_HIT_INK_UNDO: case UI_HIT_INK_CLEAR: case UI_HIT_INK_SEND:
+    case UI_HIT_GAMES_BACK: case UI_HIT_GAME_ITEM_MEMORY: case UI_HIT_GAME_ITEM_2048: case UI_HIT_GAME_ITEM_BUBBLES:
+    case UI_HIT_GAME_BACK: case UI_HIT_GAME_RESTART:
     case UI_HIT_MUSIC_OPEN: case UI_HIT_GAME_OPEN: case UI_HIT_MUSIC_BACK: case UI_HIT_MUSIC_LIST: case UI_HIT_MUSIC_PREV:
     case UI_HIT_MUSIC_PLAY: case UI_HIT_MUSIC_NEXT: case UI_HIT_MUSIC_LIST_BACK:
         return true;
@@ -1047,6 +1215,12 @@ static void handle_swipe(bool vertical, int total_dx, int total_dy)
     overflow = ui_chat_content_height(s_state) > ui_chat_area_height(s_state);
     unlock();
 
+    if (scr == UI_SCREEN_GAME_2048) {                                 /* the 2048 board: any swipe of 24 px or more */
+        if (s_hit == UI_HIT_GAME_BOARD && (abs(total_dx) >= 24 || abs(total_dy) >= 24)) {
+            game_2048_swipe(vertical ? (total_dy < 0 ? G2048_UP : G2048_DOWN) : (total_dx < 0 ? G2048_LEFT : G2048_RIGHT));
+        }
+        return;
+    }
     if (vertical) {
         if (scr == UI_SCREEN_FACE && total_dy <= -SWIPE_PX) {
             ui_go_page(UI_SCREEN_CHAT);                          /* swipe up: open the chat */
@@ -1112,6 +1286,13 @@ void ui_touch(bool down, int x, int y)
             TLOG("down (%d,%d) hit=%d%s drag>%dpx", x, y, s_hit, edge ? " edge" : "", s_drag_px);
         }
         app_on_touch_activity();
+        if (s_hit == UI_HIT_GAME_BOARD && ui_get_screen() == UI_SCREEN_GAME_BUBBLES && s_gv) {      /* poke a bubble the moment the finger lands */
+            lock();
+            int pts = bubbles_tap(&s_gv->bub, x, y - 52);
+            unlock();
+            if (pts) mark_dirty();
+            if (pts >= 5) ui_blush();                                                                 /* a crab bubble: Ke blushes */
+        }
         if (s_hit == UI_HIT_MUSIC_VOL) {                           /* the volume slider follows the finger from the first touch */
             s_vol_drag = true;
             app_set_volume(ui_music_vol_from_x(x));
